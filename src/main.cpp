@@ -1,8 +1,5 @@
 // IMPORTANT: LCDWIKI_KBV LIBRARY MUST BE SPECIFICALLY
 // CONFIGURED FOR EITHER THE TFT SHIELD OR THE BREAKOUT BOARD.
-
-//This program is a demo of how to show a bmp picture from SD card.
-
 //Set the pins to the correct ones for your development shield or breakout board.
 //the 16bit mode only use in Mega.you must modify the mode in the file of lcd_mode.h
 //when using the BREAKOUT BOARD only and using these 16 data lines to the LCD,
@@ -12,16 +9,6 @@
 
 //Remember to set the pins to suit your display module!
 
-/**********************************************************************************
-* @attention
-*
-* THE PRESENT FIRMWARE WHICH IS FOR GUIDANCE ONLY AIMS AT PROVIDING CUSTOMERS
-* WITH CODING INFORMATION REGARDING THEIR PRODUCTS IN ORDER FOR THEM TO SAVE
-* TIME. AS A RESULT, QD electronic SHALL NOT BE HELD LIABLE FOR ANY
-* DIRECT, INDIRECT OR CONSEQUENTIAL DAMAGES WITH RESPECT TO ANY CLAIMS ARISING
-* FROM THE CONTENT OF SUCH FIRMWARE AND/OR THE USE MADE BY CUSTOMERS OF THE 
-* CODING INFORMATION CONTAINED HEREIN IN CONNECTION WITH THEIR PRODUCTS.
-**********************************************************************************/
 
 #include "colors.h"
 #include <Arduino.h>
@@ -37,10 +24,21 @@ LCDWIKI_KBV my_lcd(ILI9486,40,38,39,-1,41); //model,cs,cd,wr,rd,reset
 uint32_t bmp_offset = 0;
 uint16_t s_width = my_lcd.Get_Display_Width();  
 uint16_t s_heigh = my_lcd.Get_Display_Height();
+enum draw_direction {up2down, down2up};
 
 #define PIXEL_NUMBER  (s_width/4)
 
 const char * main_file = "565.bmp";
+#define num_blinking_files 6
+const char * blinking_animation[num_blinking_files] = {
+      "01.bmp", 
+      "02.bmp", 
+      "03.bmp", 
+      "04.bmp", 
+      "05.bmp", 
+      "06.bmp"
+    };
+char * sbuf = (char*)malloc(200);
 
 uint16_t read_16(File fp)
 {
@@ -102,40 +100,63 @@ bool analysis_bpm_header(File fp)
     return true;
 }
 
-void draw_bmp_picture(File fp)
+void draw_bmp_picture(File fp, char increment, enum draw_direction draw_dir)
 {
-  #define increment 1
-  uint16_t *bpm_data = malloc(increment*sizeof(uint16_t)*s_width);
+  uint16_t *bpm_data = (uint16_t *)malloc(increment*sizeof(uint16_t)*s_width);
   //uint16_t bpm_color[PIXEL_NUMBER];
   fp.seek(bmp_offset);
-  for (int y = 0; y < s_heigh; y+=increment) {
-    fp.read(bpm_data,increment*sizeof(uint16_t)*s_width);
-    my_lcd.Draw_Bit_Map(0, y, s_width, increment, bpm_data, 1);
+  switch(draw_dir) {
+    case (up2down):
+      for (int y = s_heigh-1; y >=0; y-=increment) {
+        fp.read(bpm_data,increment*sizeof(uint16_t)*s_width);
+        my_lcd.Draw_Bit_Map(0, y, s_width, increment, bpm_data, 1);
+      }
+    break;
+    case (down2up):
+      for (int y = 0; y < s_heigh; y+=increment) {
+        fp.read(bpm_data,increment*sizeof(uint16_t)*s_width);
+        my_lcd.Draw_Bit_Map(0, y, s_width, increment, bpm_data, 1);
+      }
+    break;
   }
+
   free(bpm_data);
-  //for (int i = 0; i < s_heigh; i++) {
-  //  for (int j = 0; j < s_width; j++) {
-  //    fp.read(&bpm_data,sizeof(uint16_t));
-  //    my_lcd.Set_Draw_color(bpm_data);
-  //    my_lcd.Draw_Pixel(j,i);
-  //  }
-  //}
     
 }
 
-char * sbuf = malloc(200);
+void display_bmp(const char* file_name, enum draw_direction draw_dir) {
+    File bmp_file;
+    unsigned long start = millis();
+    bmp_file = SD.open(file_name);
+    //sprintf(sbuf,"Open File Time: %u", millis()-start);
+    //Serial.println(sbuf);
+    if(!bmp_file)
+    {
+         my_lcd.Set_Text_Back_colour(BLUE);
+         my_lcd.Set_Text_colour(WHITE);    
+         my_lcd.Set_Text_Size(1);
+         sprintf(sbuf,"didnt find BMPimage! %s", file_name);
+         Serial.println(sbuf);
+         my_lcd.Print_String(sbuf,0,10);
+     }
+     if(!analysis_bpm_header(bmp_file))
+     {  
+         my_lcd.Set_Text_Back_colour(BLUE);
+         my_lcd.Set_Text_colour(WHITE);    
+         my_lcd.Set_Text_Size(1);
+         my_lcd.Print_String("bad bmp picture!",0,0);
+         return;
+     }
+      start = millis();
+      draw_bmp_picture(bmp_file, 1, draw_dir);
+      sprintf(sbuf,"Draw BMP Time: %lu", millis()-start);
+      Serial.println(sbuf);
+      bmp_file.close(); 
+}
 
-void setup() 
-{
-  Serial.begin(9600);
+void init_SD_display() {
    my_lcd.Init_LCD();
    my_lcd.Fill_Screen(BLACK);
-   //s_width = my_lcd.Get_Display_Width();  
-   //s_heigh = my_lcd.Get_Display_Height();
-   //PIXEL_NUMBER = my_lcd.Get_Display_Width()/4;
-   
-   //strcpy(file_name,"01.bmp");
-  //Init SD_Card
    pinMode(53, OUTPUT);
    
     if (!SD.begin(53)) 
@@ -147,31 +168,21 @@ void setup()
     }
 }
 
+void setup() 
+{
+  Serial.begin(9600);
+  init_SD_display();
+}
+
 void loop() 
 {
     int i = 0;
-    File bmp_file;
-       bmp_file = SD.open(main_file);
-       if(!bmp_file)
-       {
-            my_lcd.Set_Text_Back_colour(BLUE);
-            my_lcd.Set_Text_colour(WHITE);    
-            my_lcd.Set_Text_Size(1);
-            sprintf(sbuf,"didnt find BMPimage! %s", main_file);
-            my_lcd.Print_String(sbuf,0,10);
-            while(1);
-        }
-        if(!analysis_bpm_header(bmp_file))
-        {  
-            my_lcd.Set_Text_Back_colour(BLUE);
-            my_lcd.Set_Text_colour(WHITE);    
-            my_lcd.Set_Text_Size(1);
-            my_lcd.Print_String("bad bmp picture!",0,0);
-            return;
-        }
-          draw_bmp_picture(bmp_file);
-         bmp_file.close(); 
-         delay(2000);
-        while (1);
-     
+    for (i= 0; i < 12; i++) {
+      if (i == 0)
+        display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], up2down);
+      else if (i == 6)
+        display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], up2down);
+      else
+        display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], down2up);
+    }    
 }
