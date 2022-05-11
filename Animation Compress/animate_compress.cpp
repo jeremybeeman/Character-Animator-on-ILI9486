@@ -4,7 +4,7 @@
 
 
 //NOTES:
-//5/10/2022: This code is currently only made to work on Windows
+//5/11/2022: This code is currently only made to work on Linux WSL
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,19 +21,32 @@
 //max bytes for Arduino Mega2560
 #define max_SRAM_bytes 1024*8
 #define max_Flash_bytes 1024*256
+#define sizeof_BMP_name 4
 
 #define buffer_animation_files 3 //0th for first file, 1st last file buffer, 2nd for current file
 #define buffer_first_file 0
 #define buffer_last_file 1
 #define buffer_curr_file 2
 
+#define input_dir_argv  1
+#define output_dir_argv 2
+
+//Output File Organization: 
+//     Extension: .bin 
+//     Each Entry: 
+//              4-bytes: 2 for width position, 2 for height position
+//              2-bytes: R5G6B5 for that position
+#define offset2widthpos(offset) offset % s_width
+#define offset2heightpos(offset) (int32_t)(offset / s_width)
+
+//Testing Code:
 //gcc -Wall -Werror animate_compress.cpp -o animate_compress.exe
 //animate_compress.exe "D:\jjbee\OneDrive\projects\Art\Cotton Candy\Pink_Cotton_Candy\Blinking\BMP" this 
-//valgrind --leak-check=yes --track-origins=yes  ./animate_compress "Pictures" this
+//valgrind --leak-check=yes --track-origins=yes  ./animate_compress "Pictures" Output
 
-
+//Verifies that the file being read in is actually a BMP for this system
 bool verify_bmp(FILE* curr_file, int* bmp_size, int* bmp_offset)
-{
+{   
     //See below website for BMP guidance:
     //https://en.wikipedia.org/wiki/BMP_file_format
     uint16_t two_byte_store; 
@@ -88,21 +101,36 @@ bool verify_bmp(FILE* curr_file, int* bmp_size, int* bmp_offset)
     return true;
 }
 
+void combine_file_names(char * name_of_new_file, char * last_file_str, char * curr_file_str) {
+    strcpy(name_of_new_file, last_file_str);
+    name_of_new_file[strlen(name_of_new_file)-sizeof_BMP_name] = '\0';
+    strcat(name_of_new_file, "2");
+    strcat(name_of_new_file, curr_file_str);
+    strcpy(name_of_new_file+strlen(name_of_new_file)-sizeof_BMP_name, ".bin");
+}
 
+void file_name2output_dir(char * output_file_str, char * name_of_new_file, char * output_dir) {
+    strcpy(output_file_str, output_dir);
+    strcat(output_file_str, "\\");
+    strcat(output_file_str, name_of_new_file);
+}
 
 int main(int argc, char *argv[])
 {
     char input_dir_str[100];
+    char output_file_str[512];
+    char last_file_str[256];
+    char first_file_name[256];
+    char *name_of_new_file = (char *)malloc(512); 
     long unsigned int last_byte_size = 0;
-    //long running_byte_count = 0;//add eventually. Will keep track of bytes
 
     if (argc < 3)
         printf("Usage: (animate_compress.exe in_directory out_directory)\n");
     else {
         int16_t** BMP_pixel_array_buffer = (int16_t **)malloc(sizeof(int16_t *)*buffer_animation_files); 
-        strcpy(input_dir_str, argv[1]);
+        strcpy(input_dir_str, argv[input_dir_argv]);
         DIR * FD; 
-        if (NULL == (FD = opendir(argv[1]))) {
+        if (NULL == (FD = opendir(argv[input_dir_argv]))) {
             fprintf(stderr, "ERROR: Couldn't open directory\n");
             free(BMP_pixel_array_buffer);
             return 1;
@@ -116,6 +144,16 @@ int main(int argc, char *argv[])
             continue; 
         if (!strcmp(fd_file_name->d_name, ".."))
             continue; 
+        //verify the name is a .bmp extension 
+        if (!strcmp(fd_file_name->d_name + strlen(fd_file_name->d_name)-sizeof_BMP_name-1, ".bmp")) {
+            fprintf(stderr, "ERROR, File Extension isn't exactly (.bmp). Case sensitive\n");
+            for (int i = 0; i < 2*(file_count > 0)+(file_count>1); i++) {
+                free(BMP_pixel_array_buffer[i]);
+            }
+            free(BMP_pixel_array_buffer);
+            closedir(FD);
+            return 1;
+        }
 
         strcpy(input_file_str, input_dir_str);
         strcat(input_file_str, "/"); //need to change for windows. On WSL
@@ -145,17 +183,23 @@ int main(int argc, char *argv[])
             return 1;
         }
         
-        fprintf(stdout, "File Name: %s; bmp size: %x; bmp offset: %x; \n", fd_file_name->d_name, bmp_size, bmp_offset);
+        //fprintf(stdout, "File Name: %s; bmp size: %x; bmp offset: %x; \n", fd_file_name->d_name, bmp_size, bmp_offset);
         
         //when on the first file, it gets stored into the 0th part of the buffer        
         if (file_count == 0) {
             BMP_pixel_array_buffer[buffer_first_file] = (int16_t*)malloc(sizeof(int16_t)*(bmp_size-bmp_offset)); 
             BMP_pixel_array_buffer[buffer_last_file] = (int16_t*)malloc(sizeof(int16_t)*(bmp_size-bmp_offset)); 
+            fread(BMP_pixel_array_buffer[buffer_first_file], sizeof(int16_t)*(bmp_size-bmp_offset), 1, curr_file);
+            memcpy(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_first_file], sizeof(int16_t)*(bmp_size-bmp_offset));
+            strcpy(first_file_name, fd_file_name->d_name); //store the first file name for transitions from the last to first
+            strcpy(last_file_str, fd_file_name->d_name); 
             last_byte_size = sizeof(int16_t)*(bmp_size-bmp_offset);
         }
+        //On the second file 
         else if (file_count == 1){
+            //Verifies that the space to be allocated is valid
             if (last_byte_size != sizeof(int16_t)*(bmp_size-bmp_offset)) {
-                fprintf(stderr, "Byte Size of Images are Different. File Numbers: [%d->%d] Exiting...\n", 0, 1);
+                fprintf(stderr, "Byte Size of Images are Different. Files: [%s->%s] Exiting...\n", last_file_str, fd_file_name->d_name);
                 free(BMP_pixel_array_buffer[buffer_first_file]);
                 free(BMP_pixel_array_buffer[buffer_last_file]);
                 free(BMP_pixel_array_buffer);
@@ -164,11 +208,21 @@ int main(int argc, char *argv[])
             }
             //Now that the size is valid, allocate the space and analyze it next to the first image
             BMP_pixel_array_buffer[buffer_curr_file] = (int16_t*)malloc(sizeof(int16_t)*(bmp_size-bmp_offset)); 
+            fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t)*(bmp_size-bmp_offset), 1, curr_file);
+            
+            //Now make the file that will store the cross between the last file and the current one. 
+            combine_file_names(name_of_new_file, last_file_str, fd_file_name->d_name);
+            file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
+            fprintf(stdout, "****New File Name: %s\n", output_file_str);
+
+            strcpy(last_file_str, fd_file_name->d_name); 
             last_byte_size = sizeof(int16_t)*(bmp_size-bmp_offset);
         }
+        //for all other files after the first two 
         else {
+            //Verifies that the space to be allocated is valid
             if (last_byte_size != sizeof(int16_t)*(bmp_size-bmp_offset)) {
-                fprintf(stderr, "Byte Size of Images are Different. File Numbers: [%d->%d] Exiting...\n", file_count-1, file_count);
+                fprintf(stderr, "Byte Size of Images are Different. Files: [%s->%s] Exiting...\n", last_file_str, fd_file_name->d_name);
                 for (int i = 0; i < buffer_animation_files; i++) {
                     free(BMP_pixel_array_buffer[i]);
                 }
@@ -176,7 +230,13 @@ int main(int argc, char *argv[])
                 closedir(FD);
                 return 1;
             }
-
+            fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t)*(bmp_size-bmp_offset), 1, curr_file);
+            //Now make the file that will store the cross between the last file and the current one. 
+            combine_file_names(name_of_new_file, last_file_str, fd_file_name->d_name);
+            file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
+            fprintf(stdout, "****New File Name: %s\n", output_file_str);
+            
+            strcpy(last_file_str, fd_file_name->d_name); 
             last_byte_size = sizeof(int16_t)*(bmp_size-bmp_offset);
         }
         
@@ -184,6 +244,7 @@ int main(int argc, char *argv[])
         file_count++;
     }
     closedir(FD);
+    //If there was only one file in the folder, fail code. 
     if (file_count == 1) {
         fprintf(stderr, "There was only one file in the folder, so no animation was possible.\n");
         for (int i = 0; i < buffer_animation_files-1; i++) {
@@ -192,11 +253,18 @@ int main(int argc, char *argv[])
         free(BMP_pixel_array_buffer);
         return 1;
     }
+    //Now that all files have been processed, wrap from the last to the first image for seamless transition
+    combine_file_names(name_of_new_file, last_file_str, first_file_name);
+    file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
+    fprintf(stdout, "****New File Name: %s\n", output_file_str);
 
+
+    //Free all of the buffers 
     for (int i = 0; i < buffer_animation_files; i++) {
         free(BMP_pixel_array_buffer[i]);
     }
     free(BMP_pixel_array_buffer);
   }
+  free(name_of_new_file);
   return 0;
 }
