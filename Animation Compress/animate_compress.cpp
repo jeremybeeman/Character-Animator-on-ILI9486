@@ -17,18 +17,20 @@
 
 #define s_width 320
 #define s_height 480
+#define SEEK_CURR 1
 
 
 //gcc -Wall -Werror animate_compress.cpp -o animate_compress.exe
+//animate_compress.exe "D:\jjbee\OneDrive\projects\Art\Cotton Candy\Pink_Cotton_Candy\Blinking\BMP" this 
 
 
-bool verify_bmp(FILE fp, int* bmp_size, int* bmp_offset)
+bool verify_bmp(FILE* curr_file, int* bmp_size, int* bmp_offset)
 {
     //See below website for BMP guidance:
     //https://en.wikipedia.org/wiki/BMP_file_format
-    int16_t two_byte_store; 
-    int32_t four_byte_store; 
-    if(fread(&two_byte_store, 2, 1, curr_file) != 0x4D42) //0x4D42 is the BMP signature, stating it is a BMP
+    uint16_t two_byte_store; 
+    fread(&two_byte_store, 2, 1, curr_file);
+    if(two_byte_store != 0x4D42) //0x4D42 is the BMP signature, stating it is a BMP
     {
       fprintf(stderr, "Not a valid BMP \n");
       return false;  
@@ -44,30 +46,30 @@ bool verify_bmp(FILE fp, int* bmp_size, int* bmp_offset)
     fseek(curr_file, 0x4, SEEK_CURR);
     //get width and heigh information
     uint32_t bmp_width; 
-    uint32_t bmp_heigh; 
-    fread(bmp_width, 4, 1, curr_file);
-    fread(bmp_height, 4, 1, curr_file);
+    uint32_t bmp_height; 
+    fread(&bmp_width, 4, 1, curr_file);
+    fread(&bmp_height, 4, 1, curr_file);
 
-    if((bmp_width != s_width) || (bmp_heigh != s_height))
+    if((bmp_width != s_width) || (bmp_height != s_height))
     {
       fprintf(stderr, "BMP Width and Height is not [%d, %d]. Instead, it is [%d, %d] \n", s_width, s_height, bmp_width, bmp_height);
       return false; 
     }
     //Read the number of color panes (must be 1)
-    fread(two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, curr_file);
     if(two_byte_store != 1) 
     {
         fprintf(stderr, "Number of Color Panes isn't 1\n");
         return false;
     }
     //The number of bits per pixel
-    fread(two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, curr_file);
     if (two_byte_store != 16) {
       fprintf(stderr, "Color needs to be 16-bit color\n");
       return false;
     }
 
-    fread(two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, curr_file);
     //make sure image is set to 3 for 565 images
     if(two_byte_store != 3)
     {
@@ -84,8 +86,8 @@ int main(int argc, char *argv[])
 {
     char input_dir_str[100];
     //char * file_buffer = malloc(100);
-    int16_t two_byte_store; 
-    int32_t four_byte_store; 
+    //int16_t two_byte_store; 
+    //int32_t four_byte_store; 
 
     if (argc < 3)
         printf("Usage: (animate_compress.exe in_directory out_directory)\n");
@@ -106,7 +108,7 @@ int main(int argc, char *argv[])
             continue; 
 
         strcpy(input_file_str, input_dir_str);
-        strcat(input_file_str, "\\\\");
+        strcat(input_file_str, "\\");
         strcat(input_file_str, fd_file_name->d_name);
         printf("Data: %s\n", input_file_str);
         FILE * curr_file = fopen(input_file_str, "rb"); 
@@ -115,8 +117,10 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        fread(&two_byte_store, 2, 1, curr_file);
-        fprintf(stdout, "Data: %x\n", four_byte_store);
+        int bmp_size;
+        int bmp_offset; 
+        verify_bmp(curr_file, &bmp_size, &bmp_offset);
+        fprintf(stdout, "bmp size: %x; bmp offset: %x; \n", bmp_size, bmp_offset);
 
     }
         
