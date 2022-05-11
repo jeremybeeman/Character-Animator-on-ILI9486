@@ -18,6 +18,12 @@
 #define s_width 320
 #define s_height 480
 #define SEEK_CURR 1
+//max bytes for Arduino Mega2560
+#define max_SRAM_bytes 1024*8
+#define max_Flash_bytes 1024*256
+
+#define start_expected_animation_files 1 //CHANGE TO A MORE REASONABLE NUMBER AFTER TESTING
+#define grow_files_multiplier 2
 
 
 //gcc -Wall -Werror animate_compress.cpp -o animate_compress.exe
@@ -85,9 +91,9 @@ bool verify_bmp(FILE* curr_file, int* bmp_size, int* bmp_offset)
 int main(int argc, char *argv[])
 {
     char input_dir_str[100];
-    //char * file_buffer = malloc(100);
-    //int16_t two_byte_store; 
-    //int32_t four_byte_store; 
+    int max_file_count = start_expected_animation_files;
+    int16_t** BMP_animation_files = (int16_t **)malloc(sizeof(int16_t *)*start_expected_animation_files); 
+    //long running_byte_count = 0;//add eventually. Will keep track of bytes
 
     if (argc < 3)
         printf("Usage: (animate_compress.exe in_directory out_directory)\n");
@@ -100,7 +106,12 @@ int main(int argc, char *argv[])
         }
     char input_file_str[200];
     struct dirent* fd_file_name;
+    int file_count = 0;
     while((fd_file_name = readdir(FD))) {
+        if (file_count >= max_file_count) {
+            BMP_animation_files = (int16_t **)realloc(BMP_animation_files, sizeof(int16_t *)*max_file_count*grow_files_multiplier);
+            max_file_count = max_file_count*grow_files_multiplier;
+        }
         //printf("File: %s\n", fd_file_name->d_name);
         if (!strcmp(fd_file_name->d_name, "."))
             continue; 
@@ -110,7 +121,7 @@ int main(int argc, char *argv[])
         strcpy(input_file_str, input_dir_str);
         strcat(input_file_str, "\\");
         strcat(input_file_str, fd_file_name->d_name);
-        printf("Data: %s\n", input_file_str);
+        //printf("Data: %s\n", input_file_str);
         FILE * curr_file = fopen(input_file_str, "rb"); 
         if (curr_file == NULL) {
             fprintf(stderr, "ERROR, Failed to open file [%s]\n", fd_file_name->d_name);
@@ -119,11 +130,19 @@ int main(int argc, char *argv[])
 
         int bmp_size;
         int bmp_offset; 
-        verify_bmp(curr_file, &bmp_size, &bmp_offset);
-        fprintf(stdout, "bmp size: %x; bmp offset: %x; \n", bmp_size, bmp_offset);
-
-    }
         
+        if(!verify_bmp(curr_file, &bmp_size, &bmp_offset)) {
+            fprintf(stderr, "Exiting Due to Failed BMP...\n");
+            return 1;
+        }
+        
+        fprintf(stdout, "File Name: %s; bmp size: %x; bmp offset: %x; \n", fd_file_name->d_name, bmp_size, bmp_offset);
+        
+        
+        fclose(curr_file);
+        file_count++;
+    }
+    closedir(FD);
   }
-
+  return 0;
 }
