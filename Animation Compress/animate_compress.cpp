@@ -115,12 +115,26 @@ void file_name2output_dir(char * output_file_str, char * name_of_new_file, char 
     strcat(output_file_str, name_of_new_file);
 }
 
+void decompress_r5g6b5(int16_t* compressed_color, char colors_out[3]) {
+    colors_out[0] = (*compressed_color >> (5+6)) & 0x1F; 
+    colors_out[1] = (*compressed_color & 0x7E0) >> 5;
+    colors_out[2] = *compressed_color & 0x1F;
+}
+
+void compress_r5g6b5(int16_t* compressed_color, char colors_in[3]) {
+    *compressed_color = colors_in[0] << (5+6);
+    *compressed_color |= colors_in[1] << 5;
+    *compressed_color |= colors_in[2];
+}
+
 int main(int argc, char *argv[])
 {
     char input_dir_str[100];
     char output_file_str[512];
     char last_file_str[256];
     char first_file_name[256];
+    int first_bmp_size; 
+    int first_bmp_offset;
     char *name_of_new_file = (char *)malloc(512); 
    int last_byte_size = 0;
 
@@ -138,6 +152,8 @@ int main(int argc, char *argv[])
     char input_file_str[200];
     struct dirent* fd_file_name;
     int file_count = 0;
+    int bmp_size = 0;
+    int bmp_offset = 0; 
     while((fd_file_name = readdir(FD))) {
         //printf("File: %s\n", fd_file_name->d_name);
         if (!strcmp(fd_file_name->d_name, "."))
@@ -169,9 +185,6 @@ int main(int argc, char *argv[])
             closedir(FD);
             return 1;
         }
-
-        int bmp_size = 0;
-        int bmp_offset = 0; 
         
         if(!verify_bmp(curr_file, &bmp_size, &bmp_offset)) {
             fprintf(stderr, "Exiting Due to Failed BMP...\n");
@@ -197,6 +210,8 @@ int main(int argc, char *argv[])
             if (memcmp(BMP_pixel_array_buffer[buffer_first_file], (BMP_pixel_array_buffer[buffer_last_file]), (bmp_size-bmp_offset)) != 0) {
                 fprintf(stdout, "First file and Last file not identical\n");
             }
+            first_bmp_size = bmp_size; 
+            first_bmp_offset = bmp_offset;
             strcpy(first_file_name, fd_file_name->d_name); //store the first file name for transitions from the last to first
             strcpy(last_file_str, fd_file_name->d_name); 
             last_byte_size = (bmp_size-bmp_offset);
@@ -239,7 +254,9 @@ int main(int argc, char *argv[])
             }
             fprintf(stdout, "Count change: %d\n", count_change);
             fclose(output_file);
-
+            //change the last file to what was the current file 
+            free(BMP_pixel_array_buffer[buffer_last_file]);
+            BMP_pixel_array_buffer[buffer_last_file] = BMP_pixel_array_buffer[buffer_curr_file];
             strcpy(last_file_str, fd_file_name->d_name); 
             last_byte_size = (bmp_size-bmp_offset);
         }
@@ -255,6 +272,8 @@ int main(int argc, char *argv[])
                 closedir(FD);
                 return 1;
             }
+            fseek(curr_file, bmp_offset, SEEK_SET);
+            BMP_pixel_array_buffer[buffer_curr_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
             fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
             //Now make the file that will store the cross between the last file and the current one. 
             combine_file_names(name_of_new_file, last_file_str, fd_file_name->d_name);
@@ -278,7 +297,9 @@ int main(int argc, char *argv[])
             }
             fprintf(stdout, "Count change: %d\n", count_change);
             fclose(output_file);
-
+            //change the last file to what was the current file 
+            free(BMP_pixel_array_buffer[buffer_last_file]);
+            BMP_pixel_array_buffer[buffer_last_file] = BMP_pixel_array_buffer[buffer_curr_file];
             //Now, can finally create the output file and analyze it next to the original buffer
             strcpy(last_file_str, fd_file_name->d_name); 
             last_byte_size = (bmp_size-bmp_offset);
@@ -301,11 +322,27 @@ int main(int argc, char *argv[])
     combine_file_names(name_of_new_file, last_file_str, first_file_name);
     file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
     fprintf(stdout, "New File Name: %s\n", output_file_str);
-
+    //Now, can finally create the output file and analyze it next to the original buffer
+    FILE * output_file = fopen(output_file_str, "wb");
+    int count_change = 0;
+    for(int i = 0; i < (first_bmp_size-first_bmp_offset)/2; i++) {
+        //If the file's value is not the same, isolate and store
+        if (BMP_pixel_array_buffer[buffer_last_file][i] != BMP_pixel_array_buffer[buffer_first_file][i]) {
+                //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
+                int16_t pos_val = offset2widthpos(i);
+                fwrite(&pos_val, 2, 1, output_file);
+                pos_val = offset2heightpos(i);
+                fwrite(&pos_val, 2, 1, output_file);
+                fwrite(BMP_pixel_array_buffer[buffer_last_file]+i, 2, 1, output_file);
+                count_change++;
+            }
+        }
+    fprintf(stdout, "Count change: %d\n", count_change);
+    fclose(output_file);
 
     //Free all of the buffers 
-    for (int i = 0; i < buffer_animation_files; i++) {
-        free(BMP_pixel_array_buffer[i]);
+    for (int i = 0; i < buffer_animation_files-1; i++) {
+            free(BMP_pixel_array_buffer[i]);
     }
     free(BMP_pixel_array_buffer);
   }
