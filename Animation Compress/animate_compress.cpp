@@ -1,6 +1,12 @@
 //Description: This code compresses a series of BMP images into binary files which can be played in sequence.
 //Shrinks the amount used for the animation down based on what image was shown last 
-//Holds data in this form: [x_location16, y_location16, r5g6b5]
+ 
+//First 2 bytes are "AR" to verify the file is accurate 
+//Then, next four bytes are the size of the pertinent data (number of entries). 
+//Finally, one byte to specify which type of encoding
+//Encode of 1:
+//  Holds data in this form: [x_location16, y_location16, r5g6b5]. This way for all entries
+//Stores the data into .arf files (animation rendering format)
 
 
 //NOTES:
@@ -113,7 +119,8 @@ void combine_file_names(char * name_of_new_file, char * last_file_str, char * cu
     name_of_new_file[strlen(name_of_new_file)-sizeof_BMP_name] = '\0';
     strcat(name_of_new_file, "2");
     strcat(name_of_new_file, curr_file_str);
-    strcpy(name_of_new_file+strlen(name_of_new_file)-sizeof_BMP_name, ".bin");
+    //.arf stands for animation rendering file
+    strcpy(name_of_new_file+strlen(name_of_new_file)-sizeof_BMP_name, ".arf");
 }
 
 void file_name2output_dir(char * output_file_str, char * name_of_new_file, char * output_dir) {
@@ -134,27 +141,49 @@ void compress_r5g6b5(int16_t* compressed_color, char colors_in[3]) {
     *compressed_color |= colors_in[2];
 }
 
+//sets up the arf file with the 2-byte start and allocates the 4-byte arf location for the pertinent info size
+void setup_arf(FILE * arf_file, char encode_type) {
+    char arf_title [2] = {'A', 'R'};
+    fwrite(arf_title, 2, 1, arf_file); //Stores the "AR" title
+    int temp_blank_space = 0;
+    fwrite(&temp_blank_space, sizeof(int), 1, arf_file); //Init stores size gap for the size
+    fwrite(&encode_type, sizeof(char), 1, arf_file); //Write out the encoding type
+}
+
 //loads the output binary file with the pixels different between the last slide and current slide
-void load_output_bin(int16_t* last_BMP_pixel_arr, int16_t* curr_BMP_pixel_arr, int bmp_pixel_arr_size, FILE * output_file) {
+//outputs the number of entries into the file (actual file size is entries*6bytes+6)
+int load_output_arf(int16_t* last_BMP_pixel_arr, int16_t* curr_BMP_pixel_arr, int bmp_pixel_arr_size, FILE * output_file) {
     int16_t pos_val;
     int count_change = 0;
     for(int i = 0; i < (bmp_pixel_arr_size)/2; i++) {
         //If the file's value is not the same, isolate and store
         if (last_BMP_pixel_arr[i] != curr_BMP_pixel_arr[i]) {
             //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
+            
+            //Find the width and height positions for the differing pixels 
             pos_val = offset2widthpos(i);
             fwrite(&pos_val, 2, 1, output_file);
             pos_val = offset2heightpos(i);
             fwrite(&pos_val, 2, 1, output_file);
+            //Write the int16_t value out
             fwrite(curr_BMP_pixel_arr+i, 2, 1, output_file);
             count_change++;
         }
     }
     fprintf(stdout, "Count Changes: %d\n", count_change);
+    return count_change;
 }
 
+//load the arf file with the number of entries in the file. Used to know when at the end of the file
+void load_arf_num_entries(FILE * arf_file, int num_entries) {
+    fseek(arf_file, 0x2, SEEK_SET);
+    fwrite(&num_entries, sizeof(int), 1, arf_file);
+}
+
+//The main function runs through and analyzes the information 
 int main(int argc, char *argv[])
 {
+    char encode_type = 1;
     char input_dir_str[100];
     char output_file_str[512];
     char last_file_str[256];
@@ -167,6 +196,13 @@ int main(int argc, char *argv[])
     if (argc < 3)
         printf("Usage: (animate_compress.exe in_directory out_directory)\n");
     else {
+        if (argc >= 4) {
+            if (strcmp(argv[3], "xyrgb") == 0)
+                encode_type = 1;
+        }
+        else {
+            encode_type = 1;
+        }
         int16_t** BMP_pixel_array_buffer = (int16_t **)malloc(sizeof(int16_t *)*buffer_animation_files); 
         strcpy(input_dir_str, argv[input_dir_argv]);
         DIR * FD; 
@@ -266,9 +302,12 @@ int main(int argc, char *argv[])
 
             //Now, can finally create the output file and analyze it next to the original buffer
             FILE * output_file = fopen(output_file_str, "wb");
+
             //Load the output file binary
-            load_output_bin(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), output_file);
-            
+            setup_arf(output_file, encode_type);
+            int num_entries = load_output_arf(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), output_file);
+            load_arf_num_entries(output_file, num_entries);
+
             fclose(output_file);
             //change the last file to what was the current file 
             free(BMP_pixel_array_buffer[buffer_last_file]);
@@ -299,7 +338,10 @@ int main(int argc, char *argv[])
             //Now, can finally create the output file and analyze it next to the original buffer
             FILE * output_file = fopen(output_file_str, "wb");
             //Load the output file with the changing values
-            load_output_bin(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), output_file);
+            setup_arf(output_file, encode_type);
+            int num_entries = load_output_arf(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), output_file);
+            load_arf_num_entries(output_file, num_entries);
+
             fclose(output_file);
             //change the last file to what was the current file 
             free(BMP_pixel_array_buffer[buffer_last_file]);
@@ -328,20 +370,11 @@ int main(int argc, char *argv[])
     fprintf(stdout, "New File Name: %s\n", output_file_str);
     //Now, can finally create the output file and analyze it next to the original buffer
     FILE * output_file = fopen(output_file_str, "wb");
-    int count_change = 0;
-    for(int i = 0; i < (first_bmp_size-first_bmp_offset)/2; i++) {
-        //If the file's value is not the same, isolate and store
-        if (BMP_pixel_array_buffer[buffer_last_file][i] != BMP_pixel_array_buffer[buffer_first_file][i]) {
-                //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
-                int16_t pos_val = offset2widthpos(i);
-                fwrite(&pos_val, 2, 1, output_file);
-                pos_val = offset2heightpos(i);
-                fwrite(&pos_val, 2, 1, output_file);
-                fwrite(BMP_pixel_array_buffer[buffer_last_file]+i, 2, 1, output_file);
-                count_change++;
-            }
-        }
-    fprintf(stdout, "Count change: %d\n", count_change);
+    //Load the output with the changing BMP pixels
+    setup_arf(output_file, encode_type);
+    int num_entries = load_output_arf(BMP_pixel_array_buffer[buffer_first_file], BMP_pixel_array_buffer[buffer_last_file], (first_bmp_size-first_bmp_offset), output_file);
+    load_arf_num_entries(output_file, num_entries);
+
     fclose(output_file);
 
     //Free all of the buffers 
