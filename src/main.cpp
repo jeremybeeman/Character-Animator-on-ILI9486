@@ -289,6 +289,7 @@ void display_arf(const char* file_name) {
           }
           my_lcd.Draw_Pixel(entries_buff[0], entries_buff[1]);
         }
+        free(entries_buff);
       break;
     }
 
