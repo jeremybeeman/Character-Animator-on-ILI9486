@@ -31,24 +31,45 @@ enum draw_direction {up2down, down2up, left2right, right2left};
 const char * main_file = "565.bmp";
 #define num_blinking_files 6
 const char * blinking_animation[num_blinking_files] = {
-      "01.bmp", 
-      "02.bmp", 
-      "03.bmp", 
-      "04.bmp", 
-      "05.bmp", 
-      "b06.bmp", 
+      "vert/01.bmp", 
+      "vert/02.bmp", 
+      "vert/03.bmp", 
+      "vert/04.bmp", 
+      "vert/05.bmp", 
+      "vert/b06.bmp", 
 
     };
 const char * horiz_blinking_animation[num_blinking_files] = {
-      "h01.bmp", 
-      "h02.bmp", 
-      "h03.bmp", 
-      "h04.bmp", 
-      "h05.bmp", 
-      "h06.bmp", 
+      "horiz/h01.bmp", 
+      "horiz/h02.bmp", 
+      "horiz/h03.bmp", 
+      "horiz/h04.bmp", 
+      "horiz/h05.bmp", 
+      "horiz/h06.bmp", 
 
     };
-char * sbuf = (char*)malloc(200);
+
+#define blink_loop 7
+const char * vert_blink_anim_compress[blink_loop] = {
+      "vert/01.bmp", 
+      "blinkarf/01206.arf", 
+      "blinkarf/02203.arf", 
+      "blinkarf/03204.arf", 
+      "blinkarf/04205.arf", 
+      "blinkarf/05206.arf", 
+      "blinkarf/06201.arf", 
+};
+
+#define tobl_loop 5
+const char * vert_tobl_loop[tobl_loop] = {
+      "tobl/tobl1.bmp", 
+      "tobl/01.arf", 
+      "tobl/02.arf", 
+      "tobl/03.arf", 
+      "tobl/04.arf", 
+};
+
+char * sbuf = (char*)malloc(300);
 
 uint16_t read_16(File fp)
 {
@@ -117,7 +138,6 @@ void draw_bmp_picture(File fp, char increment, enum draw_direction draw_dir, uin
   //when drawing, it is already assumed that the bmp already works. 
   uint16_t *bmp_data;
   if (bmp_width == s_height) {
-    Serial.println("Going by Height");
     //if the height and the draw direction is not valid, just set it to a valid one
     if (draw_dir == up2down)
       draw_dir = left2right; 
@@ -164,9 +184,7 @@ void draw_bmp_picture(File fp, char increment, enum draw_direction draw_dir, uin
       }
     break;
   }
-
-  free(bmp_data);
-    
+  free(bmp_data);  
 }
 
 void display_bmp(const char* file_name, enum draw_direction draw_dir) {
@@ -175,6 +193,7 @@ void display_bmp(const char* file_name, enum draw_direction draw_dir) {
     uint32_t bmp_height;
     unsigned long start = millis();
     bmp_file = SD.open(file_name);
+    //open the BMP
     if(!bmp_file)
     {
          my_lcd.Set_Text_Back_colour(BLUE);
@@ -188,6 +207,7 @@ void display_bmp(const char* file_name, enum draw_direction draw_dir) {
          return;
      }
     else {
+      //verify the BMP to be valid
       if(!analysis_bmp_header(bmp_file, &bmp_width, &bmp_height))
        {  
            my_lcd.Set_Text_Back_colour(BLUE);
@@ -220,23 +240,95 @@ void init_SD_display() {
     }
 }
 
+bool verify_arf(File arf_fp, uint32_t* arf_num_entries, char* encode_type) {
+  if (read_16(arf_fp) != 0x5241) { //0x5241 is "AR"
+    Serial.println("Non valid ARF file. Doesn't have correct header format.");
+    return false; 
+  }
+
+  *arf_num_entries = read_32(arf_fp); //read in the number of entries 
+  *encode_type = arf_fp.read(); //read in the encoding type (How entries arranged)
+  //Serial.print("NE: ");
+  //Serial.print(*arf_num_entries); 
+  //Serial.print(" ET: "); 
+  //Serial.println((int)*encode_type);
+  return true;
+  
+}
+//.arf stands for animation rendering file
+void display_arf(const char* file_name) {
+    File arf_file; 
+    uint32_t arf_num_entries; 
+    char encode_type;
+    unsigned long start = millis();
+    arf_file = SD.open(file_name);
+    if (!arf_file) {
+      Serial.println("Failed to open ARF");
+      return;
+    }
+
+    if (!verify_arf(arf_file, &arf_num_entries, &encode_type)) {
+      Serial.println("Failed to verify ARF file");
+      arf_file.close(); 
+      return;
+    }
+
+    switch(encode_type) {
+      case 1: //when the encoding type is xyrgb
+        int16_t* entries_buff = (int16_t*)malloc(sizeof(int16_t)*3); //3 because 2-byte xpos, 2-byte y-pos, 2-byte rgb
+        //loop through all of the entries, reading them in and printing their values to the screen
+        int16_t last_color = 0x00; 
+        my_lcd.Set_Draw_color(last_color);
+        for (uint32_t i = 0; i < arf_num_entries; i++) {
+          arf_file.read(entries_buff, sizeof(int16_t)*3); 
+          //sprintf(sbuf, "E#%d, [%d, %d, %x]", i, entries_buff[0], entries_buff[1], entries_buff[2]);
+          //Serial.println(sbuf);
+          if (entries_buff[2] != last_color) {
+            my_lcd.Set_Draw_color(entries_buff[2]);
+            last_color = entries_buff[2];
+          }
+          my_lcd.Draw_Pixel(entries_buff[0], entries_buff[1]);
+        }
+      break;
+    }
+
+    sprintf(sbuf,"Draw ARF Time: %lu", millis()-start);
+    Serial.println(sbuf);
+    arf_file.close(); 
+}
+
+//assumes format of .bmp, then all .arf after
+bool draw_animation(const char ** animation_files, int num_files, bool* already_blinked) {
+  //if (!*already_blinked) {
+    display_bmp(animation_files[0], down2up); 
+    *already_blinked = true;
+  //}
+  for (int i = 1; i < num_files; i++) {
+    display_arf(animation_files[i]);
+  }
+  return true;
+}
+
 void setup() 
 {
   Serial.begin(9600);
   init_SD_display();
 }
 
+bool already_blinked = false;
 void loop() 
 {
-    int i = 0;
-    for (i= 0; i < 12; i++) {
-      //Serial.println(i);
-      display_bmp(horiz_blinking_animation[i % 6], left2right);
-      //if (i == 0)
-      //  display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], up2down);
-      //else if (i == 6)
-      //  display_bmp(blinking_animation[5], up2down);
-      //else
-      //  display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], down2up);
-    }    
+
+    draw_animation(vert_tobl_loop, tobl_loop, &already_blinked);
+    //int i = 0;
+    //for (i= 0; i < 12; i++) {
+    //  //Serial.println(i);
+    //  //display_bmp(horiz_blinking_animation[i % 6], right2left);
+    //  //if (i == 0)
+    //  //  display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], up2down);
+    //  //else if (i == 6)
+    //  //  display_bmp(blinking_animation[5], up2down);
+    //  //else
+    //  //  display_bmp(blinking_animation[12*(i>=5) + (1-2*(i>=5))*i], down2up);
+    //}    
 }
