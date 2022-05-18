@@ -14,6 +14,11 @@
 //5/16/2022: Modifying from just folder input and folder output to i/o in multiple ways
 //5/16/2022: For verifying the bmp, case sensitive (has to be lower case), also can't have . in any names of folders
 
+
+//TO DO:
+//1. Still need to allow for horizontal animations and rotating the images
+//2. Allow for the .txt file to specify comments, output file, encoding type
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -49,18 +54,38 @@
 #define offset2heightpos(offset) (int32_t)(offset / s_width)
 
 //Testing Code:
-//gcc -Wall -Werror animate_compress.cpp -o animate_compress.exe
+//gcc -Wall -Werror animate_compress.cpp -o animate_compress
 //animate_compress.exe "D:\jjbee\OneDrive\projects\Art\Cotton Candy\Pink_Cotton_Candy\Blinking\BMP" this 
-//valgrind --leak-check=yes --track-origins=yes  ./animate_compress "Pictures" Output
+//valgrind --leak-check=yes --track-origins=yes  ./animate_compress "Output/test.txt" Output
 
 /**************************************************************************************************************
  *                  BMP Handling 
  **************************************************************************************************************/
+#define first_BMP_attr 0
+#define last_BMP_attr  1
+#define curr_BMP_attr  2 
+#define total_BMP_attr 3
+enum image_orientation {horizontal, vertical};
+enum draw_direction {up=0, down=1, left=2, right=3, invalid=0xff};
+struct BMP_attributes {
+    FILE* BMP_file;
+    char* file_name;
+    int width;
+    int height;
+    int offset;
+    int size;
+    enum image_orientation orientation;
+    enum draw_direction animate_dir;
+    int16_t* BMP_pixel_array;
+};
+
+//Extracts the extension after the ".". Only works if there are no other "."
 char * extract_extension(char * file_in) {
     const char period = '.';
     return strchr(file_in, period);
 }
 
+//Verifies that the file extension is ".bmp". Case sensitive
 bool verify_bmp_file_name(char* file2check) {
     char* bmp_ext = (char*)malloc(sizeof_BMP_name+1);
     memcpy(bmp_ext, extract_extension(file2check), sizeof_BMP_name);
@@ -71,59 +96,70 @@ bool verify_bmp_file_name(char* file2check) {
 }
 
 //Verifies that the file being read in is actually a BMP for this system
-bool verify_bmp(FILE* curr_file, int* bmp_size, int* bmp_offset)
+//Also loads the BMP attribute struct while verifying
+bool verify_bmp(struct BMP_attributes* BMP_handler)
 {   
     //See below website for BMP guidance:
     //https://en.wikipedia.org/wiki/BMP_file_format
     uint16_t two_byte_store; 
-    fread(&two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, BMP_handler->BMP_file);
     if(two_byte_store != 0x4D42) //0x4D42 is the BMP signature, stating it is a BMP
     {
       fprintf(stderr, "Not a valid BMP \n");
       return false;  
     }
     //extracts the BMP's size 
-    fread(bmp_size, 4, 1, curr_file);
+    fread(&(BMP_handler->size), 4, 1, BMP_handler->BMP_file);
     //skip the next four bytes because they're application specific
-    fseek(curr_file, 0x4, SEEK_CURR);
+    fseek(BMP_handler->BMP_file, 0x4, SEEK_CURR);
     //get offset to where pixel info is
-    fread(bmp_offset, 4, 1, curr_file);
+    fread(&(BMP_handler->offset), 4, 1, BMP_handler->BMP_file);
     //skip Size of Header information
-    fseek(curr_file, 0x4, SEEK_CURR);
-    //get width and heigh information
-    uint32_t bmp_width; 
-    uint32_t bmp_height; 
-    fread(&bmp_width, 4, 1, curr_file);
-    fread(&bmp_height, 4, 1, curr_file);
+    fseek(BMP_handler->BMP_file, 0x4, SEEK_CURR);
+    //read width and height
+    fread(&(BMP_handler->width), 4, 1, BMP_handler->BMP_file);
+    fread(&(BMP_handler->height), 4, 1, BMP_handler->BMP_file);
 
-    if((bmp_width != s_width) || (bmp_height != s_height))
-    {
-      fprintf(stderr, "BMP Width and Height is not [%d, %d]. Instead, it is [%d, %d] \n", s_width, s_height, bmp_width, bmp_height);
-      return false; 
+    //Check the width and height and determine the orientation
+    if (BMP_handler->width == s_width && BMP_handler->height == s_height) {
+        BMP_handler->orientation = vertical;
     }
+    else if (BMP_handler->width == s_height && BMP_handler->height == s_width) {
+        BMP_handler->orientation = horizontal;
+    }
+    else {
+      fprintf(stderr, "BMP Width and Height are invalid");
+      return false;    
+    }
+
     //Read the number of color panes (must be 1)
-    fread(&two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, BMP_handler->BMP_file);
     if(two_byte_store != 1) 
     {
         fprintf(stderr, "Number of Color Panes isn't 1\n");
         return false;
     }
     //The number of bits per pixel
-    fread(&two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, BMP_handler->BMP_file);
     if (two_byte_store != 16) {
       fprintf(stderr, "Color needs to be 16-bit color\n");
       return false;
     }
 
-    fread(&two_byte_store, 2, 1, curr_file);
+    fread(&two_byte_store, 2, 1, BMP_handler->BMP_file);
     //make sure image is set to 3 for 565 images
     if(two_byte_store != 3)
     {
       fprintf(stderr, "Color needs to be R5G6B5\n");
       return false; 
      }
-    
     return true;
+}
+
+void free_BMP_attr(BMP_attributes* BMP_handler) {
+    free(BMP_handler->file_name); 
+    free(BMP_handler->BMP_pixel_array);
+    free(BMP_handler);
 }
 /**************************************************************************************************************
  *                  END BMP Handling 
@@ -169,7 +205,7 @@ void combine_file_names(char * name_of_new_file, char * last_file_str, char * cu
     //.arf stands for animation rendering file
     strcpy(name_of_new_file+strlen(name_of_new_file)-sizeof_BMP_name, ".arf");
 }
-
+//Combines the output file directory with the file name
 void file_name2output_dir(char * output_file_str, char * name_of_file, char * output_dir) {
     strcpy(output_file_str, output_dir);
     strcat(output_file_str, "/");//ONLY on WSL
@@ -315,7 +351,7 @@ char** read_cmd_file(int* num_lines_out, char* input_cmd_file_dir) {
  **************************************************************************************************************/
 //input the draw direction as a char pointer and output a number. 
 //(up = 0), (down = 1), (left = 2), (right = 3)
-char draw_dir2num(char* draw_dir) {
+enum draw_direction draw_dir2num(char* draw_dir) {
     const char* total_dirs[4] = {
         "up", 
         "down", 
@@ -326,64 +362,65 @@ char draw_dir2num(char* draw_dir) {
 
     for (int i = 0; i < 4; i++) {
         if (strcmp_sz((char*)total_dirs[i], draw_dir, total_dir_sz[i])) {
-            return i;
+            return (enum draw_direction)i;
         }
     }
     fprintf(stderr, "Invalid draw direction. Draw direction HAS to be lowercase and just the word and a new line character.");
-    return 0xff; //-1 if fail
+    return (enum draw_direction)0xff; //-1 if fail
 }
 //sets up the arf file with the 2-byte start and allocates the 4-byte arf location for the pertinent info size
-void setup_arf(FILE * arf_file, char* direction_draw, char encode_type) {
+void setup_arf(FILE * arf_file, enum draw_direction animate_dir, char encode_type) {
     char arf_title [2] = {'A', 'R'};
     fwrite(arf_title, 2, 1, arf_file); //Stores the "AR" title
     int temp_blank_space = 0;
     fwrite(&temp_blank_space, sizeof(int), 1, arf_file); //Init stores size gap for the size
-    char dirnum = draw_dir2num(direction_draw);
-    fwrite(&dirnum, sizeof(char), 1, arf_file);//Writes the direction to draw at
+    char animate_char = (char)animate_dir;
+    fwrite(&animate_char, sizeof(char), 1, arf_file);//Writes the direction to draw at
     fwrite(&encode_type, sizeof(char), 1, arf_file); //Write out the encoding type
 }
 
 //loads the output binary file with the pixels different between the last slide and current slide
 //outputs the number of entries into the file (actual file size is entries*6bytes+6)
 //uses the encoding type 1
-int load_arf_encode1(int16_t* last_BMP_pixel_arr, int16_t* curr_BMP_pixel_arr, int bmp_pixel_arr_size, char* draw_dir, FILE * output_file) {
+int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, FILE* output_file){//int16_t* last_BMP_pixel_arr, int16_t* curr_BMP_pixel_arr, int bmp_pixel_arr_size, char* draw_dir, FILE * output_file) {
     int16_t pos_val;
     int count_change = 0;
-    char draw_num = draw_dir2num(draw_dir);
-    switch(draw_num) {
-        case 0: //up 
-            for(int i = 0; i < (bmp_pixel_arr_size)/2; i++){
+    enum draw_direction draw_dir = curr_BMP->animate_dir;
+    switch(draw_dir) {
+        case up:
+            for(int i = 0; i < (curr_BMP->size-curr_BMP->offset)/2; i++){
                 //If the file's value is not the same, isolate and store
-                if (last_BMP_pixel_arr[i] != curr_BMP_pixel_arr[i]) {
+                if (last_BMP->BMP_pixel_array[i] != curr_BMP->BMP_pixel_array[i]) {
                     //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
-
                     //Find the width and height positions for the differing pixels 
                     pos_val = offset2widthpos(i);
                     fwrite(&pos_val, 2, 1, output_file);
                     pos_val = offset2heightpos(i);
                     fwrite(&pos_val, 2, 1, output_file);
                     //Write the int16_t value out
-                    fwrite(curr_BMP_pixel_arr+i, 2, 1, output_file);
+                    fwrite(curr_BMP->BMP_pixel_array+i, 2, 1, output_file);
                     count_change++;
                 }
             }
         break;
-        case 1: //down
-        for(int i = (bmp_pixel_arr_size)/2 -1; i >= 0; i--){
+        case down: //down
+        for(int i = (curr_BMP->size-curr_BMP->offset)/2 -1; i >= 0; i--){
             //If the file's value is not the same, isolate and store
-            if (last_BMP_pixel_arr[i] != curr_BMP_pixel_arr[i]) {
+            if (last_BMP->BMP_pixel_array[i] != curr_BMP->BMP_pixel_array[i]) {
                 //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
-
                 //Find the width and height positions for the differing pixels 
                 pos_val = offset2widthpos(i);
                 fwrite(&pos_val, 2, 1, output_file);
                 pos_val = offset2heightpos(i);
                 fwrite(&pos_val, 2, 1, output_file);
                 //Write the int16_t value out
-                fwrite(curr_BMP_pixel_arr+i, 2, 1, output_file);
+                fwrite(curr_BMP->BMP_pixel_array+i, 2, 1, output_file);
                 count_change++;
             }
         }
+        break;
+        default: 
+
         break;
     }
     fprintf(stdout, "Count Changes: %d\n", count_change);
@@ -394,6 +431,25 @@ int load_arf_encode1(int16_t* last_BMP_pixel_arr, int16_t* curr_BMP_pixel_arr, i
 void load_arf_num_entries(FILE * arf_file, int num_entries) {
     fseek(arf_file, 0x2, SEEK_SET);
     fwrite(&num_entries, sizeof(int), 1, arf_file);
+}
+//Taking in BMP attributes, creates the output files and spits out data to them
+void files2arf(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, char* output_dir, char encode_type) {
+    char name_of_output_file[512];
+    char output_file_str[512];
+    //First create the name of the output file
+    combine_file_names(name_of_output_file, last_BMP->file_name, curr_BMP->file_name);
+    file_name2output_dir(output_file_str, name_of_output_file, output_dir);
+    fprintf(stdout, "New File Name: %s\n", output_file_str);
+
+    //Now, can finally create the output file and analyze it next to the original buffer
+    FILE * output_file = fopen(output_file_str, "wb");
+
+    //Load the output file binary
+    setup_arf(output_file, curr_BMP->animate_dir, encode_type);
+    int num_entries = load_arf_encode1(last_BMP, curr_BMP, output_file);
+    load_arf_num_entries(output_file, num_entries);
+
+    fclose(output_file);
 }
 /**************************************************************************************************************
  *                 END ARF File Handler
@@ -411,13 +467,7 @@ int main(int argc, char *argv[])
 {   
     char encode_type;
     char input_dir_file_str[512];
-    char output_file_str[512];
-    char last_file_str[256];
-    char first_file_name[256];
-    int first_bmp_size; 
-    int first_bmp_offset;
-    char *name_of_new_file = (char *)malloc(512); 
-    int last_byte_size = 0;
+
 
     if (argc < 3)
         printf("Usage: (animate_compress.exe in_setup_file.txt out_directory)\n");
@@ -429,8 +479,6 @@ int main(int argc, char *argv[])
         else {
             encode_type = 1;
         }
-        //Allocate the BMP buffer
-        int16_t** BMP_pixel_array_buffer = (int16_t **)malloc(sizeof(int16_t *)*buffer_animation_files); 
         //Store the input file's directory
         strcpy(input_dir_file_str, argv[input_dir_argv]);
         int num_lines_in_file;
@@ -438,119 +486,96 @@ int main(int argc, char *argv[])
         //Read in the cmd file
         if (NULL == (cmd_file_data = read_cmd_file(&num_lines_in_file, input_dir_file_str))) {
             //failed to parse the file.
-            free(BMP_pixel_array_buffer);
             return 1;
         }
         //Now time to analyze the cmd file data
         int file_count = 0;
-        int bmp_size = 0;
-        int bmp_offset = 0; 
-        //serach through all of the files
+        struct BMP_attributes BMP_handler[total_BMP_attr]; 
+        //struct BMP_attributes* BMP_attr_point; 
+        //serach through all of the data in the setup file 
         for (int curr_file_num = 0; curr_file_num < num_lines_in_file; curr_file_num+=2) {
             //verify the name is a .bmp extension 
             if (!verify_bmp_file_name(extract_file_name(cmd_file_data[curr_file_num]))) {
                 fprintf(stderr, "ERROR, File Extension isn't exactly (.bmp). Case sensitive\n");
-                free_BMP_arr(file_count, BMP_pixel_array_buffer);
-                return 1;
-            }
-            //After the bmp file name has been verified, then verify the bmp itself 
-            FILE * curr_file = fopen(cmd_file_data[curr_file_num], "rb"); 
-            //if failed to open the current file, release info
-            if (curr_file == NULL) {
-                fprintf(stderr, "ERROR, Failed to open file [%s]\n", cmd_file_data[curr_file_num]);
-                free_BMP_arr(file_count, BMP_pixel_array_buffer);
-                return 1;
-            }
-            //if the file isn't a valid bmp, free
-            if(!verify_bmp(curr_file, &bmp_size, &bmp_offset)) {
-                fprintf(stderr, "Exiting Due to Failed BMP...\n");
-                free_BMP_arr(file_count, BMP_pixel_array_buffer);
                 return 1;
             }
 
+            //this switch sets up BMP files and analyzes them
             switch(file_count) {
-                case 0:
-                //////////////////////////////////////////////////
-                    fseek(curr_file, bmp_offset, SEEK_SET);
-                    //Allocate the first file and last file values and store in the values
-                    BMP_pixel_array_buffer[buffer_first_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                    BMP_pixel_array_buffer[buffer_last_file]  = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                    fprintf(stdout, "Bmp Offset: %x; BMP size: %x; BMP diff: %x\n", bmp_offset, bmp_size, bmp_size-bmp_offset);
-                    fread(BMP_pixel_array_buffer[buffer_first_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
-                    fseek(curr_file, bmp_offset, SEEK_SET);
-                    fread(BMP_pixel_array_buffer[buffer_last_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
-
-                    //store the first file info
-                    first_bmp_size = bmp_size; 
-                    first_bmp_offset = bmp_offset;
-
-                    //Store the first and last file names and store the last byte size
-                    strcpy(first_file_name, extract_file_name(cmd_file_data[curr_file_num])); //store the first file name for transitions from the last to first
-                    strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
-                    last_byte_size = (bmp_size-bmp_offset);
-                /////////////////////////////////////////////////
-                break;
-                default:
-                //////////////////////////////////////////////////
-                    fseek(curr_file, bmp_offset, SEEK_SET);
-                    //Verifies that the space to be allocated is valid
-                    if (last_byte_size != (bmp_size-bmp_offset)) {
-                        fprintf(stderr, "Byte Size of Images are Different. Files: [%s->%s] Exiting...\n", last_file_str, cmd_file_data[curr_file_num]);
-                        free_BMP_arr(file_count, BMP_pixel_array_buffer);
+                case 0: 
+                //the first BMP file. Set up the first BMP file and the last file*
+                //also fills up the pixel array
+                /////////////////////////////////////////////
+                    BMP_handler[first_BMP_attr].file_name = extract_file_name(cmd_file_data[curr_file_num]);
+                    BMP_handler[first_BMP_attr].BMP_file = fopen(cmd_file_data[curr_file_num], "rb");
+                    if (BMP_handler[first_BMP_attr].BMP_file == NULL) {
+                        fprintf(stderr, "ERROR, Failed to open file [%s]\n", cmd_file_data[curr_file_num]);
                         return 1;
                     }
-                    //Now that the size is valid, allocate the space and analyze it next to the first image
-                    BMP_pixel_array_buffer[buffer_curr_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                    fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
+                    //if the file isn't a valid bmp, free
+                    if(!verify_bmp(&BMP_handler[first_BMP_attr])) {
+                        fprintf(stderr, "Exiting Due to Failed BMP...\n");
+                        return 1;
+                    }
+                    //Fills the values of the BMP pixel array
+                    BMP_handler[first_BMP_attr].BMP_pixel_array = (int16_t*)malloc((BMP_handler[first_BMP_attr].size-BMP_handler[first_BMP_attr].offset)); 
+                    fread(BMP_handler[first_BMP_attr].BMP_pixel_array, sizeof(int16_t), (BMP_handler[first_BMP_attr].size-BMP_handler[first_BMP_attr].offset)/2, BMP_handler[first_BMP_attr].BMP_file);
+                    //Free up the BMP file
+                    fclose(BMP_handler[first_BMP_attr].BMP_file);
+                    //Can't fill the direction to draw in until the last file has been hit
 
-                    //Now make the file that will store the cross between the last file and the current one. 
-                    combine_file_names(name_of_new_file, last_file_str, extract_file_name(cmd_file_data[curr_file_num]));
-                    file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
-                    fprintf(stdout, "New File Name: %s\n", output_file_str);
+                    //First file and last file are the same data, so copy/paste
+                    memcpy(&BMP_handler[last_BMP_attr], &BMP_handler[first_BMP_attr], sizeof(struct BMP_attributes));
+                break;
+                default: //sets up the current File*
+                /////////////////////////////////////////////
+                    BMP_handler[curr_BMP_attr].file_name = extract_file_name(cmd_file_data[curr_file_num]);
+                    BMP_handler[curr_BMP_attr].BMP_file = fopen(cmd_file_data[curr_file_num], "rb");
+                    if (BMP_handler[curr_BMP_attr].BMP_file == NULL) {
+                        fprintf(stderr, "ERROR, Failed to open file [%s]\n", cmd_file_data[curr_file_num]);
+                        return 1;
+                    }
+                    //if the file isn't a valid bmp, free
+                    if(!verify_bmp(&BMP_handler[curr_BMP_attr])) {
+                        fprintf(stderr, "Exiting Due to Failed BMP...\n");
+                        return 1;
+                    }
+                    //Fills the values of the BMP pixel array
+                    BMP_handler[curr_BMP_attr].BMP_pixel_array = (int16_t*)malloc((BMP_handler[curr_BMP_attr].size-BMP_handler[curr_BMP_attr].offset)); 
+                    fread(BMP_handler[curr_BMP_attr].BMP_pixel_array, sizeof(int16_t), (BMP_handler[curr_BMP_attr].size-BMP_handler[curr_BMP_attr].offset)/2, BMP_handler[curr_BMP_attr].BMP_file);
+                    //Fill in the draw direction
+                    BMP_handler[curr_BMP_attr].animate_dir = draw_dir2num(cmd_file_data[curr_file_num-1]);
 
-                    //Now, can finally create the output file and analyze it next to the original buffer
-                    FILE * output_file = fopen(output_file_str, "wb");
+                    //Now that the files have been properly loaded in, now they can be analyzed
+                    files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[curr_BMP_attr], argv[output_dir_argv], encode_type);
+                    //Free up the BMP file
+                    fclose(BMP_handler[curr_BMP_attr].BMP_file);
+                    //allow for reallocation of data
+                    if (file_count != 1)
+                        free(BMP_handler[last_BMP_attr].BMP_pixel_array);
 
-                    //Load the output file binary
-                    setup_arf(output_file, cmd_file_data[curr_file_num-1], encode_type);
-                    int num_entries = load_arf_encode1(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), cmd_file_data[curr_file_num-1], output_file);
-                    load_arf_num_entries(output_file, num_entries);
-
-                    fclose(output_file);
-                    //change the last file to what was the current file 
-                    free(BMP_pixel_array_buffer[buffer_last_file]);
-                    BMP_pixel_array_buffer[buffer_last_file] = BMP_pixel_array_buffer[buffer_curr_file];
-                    strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
-                    last_byte_size = (bmp_size-bmp_offset);
-                /////////////////////////////////////////////////
+                    //Now move the data from the current file to the last file 
+                    memcpy(&BMP_handler[last_BMP_attr], &BMP_handler[curr_BMP_attr], sizeof(struct BMP_attributes));
                 break;
             }
-            fclose(curr_file);
             file_count++;
         }
         //If there was only one file in the folder, fail code. 
         if (file_count == 1) {
             fprintf(stderr, "There was only one file in the folder, so no animation was possible.\n");
-            free_BMP_arr(file_count, BMP_pixel_array_buffer);
             return 1;
         }
-        //Now that all files have been processed, wrap from the last to the first image for seamless transition
-        combine_file_names(name_of_new_file, last_file_str, first_file_name);
-        file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
-        fprintf(stdout, "New File Name: %s\n", output_file_str);
-        //Now, can finally create the output file and analyze it next to the original buffer
-        FILE * output_file = fopen(output_file_str, "wb");
-        //Load the output with the changing BMP pixels
-        setup_arf(output_file, cmd_file_data[file_count*2-1], encode_type);
-        int num_entries = load_arf_encode1(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_first_file], (first_bmp_size-first_bmp_offset), cmd_file_data[file_count*2-1], output_file);
-        load_arf_num_entries(output_file, num_entries);
-
-        fclose(output_file);
-
-        //Free all of the buffers 
-        free_BMP_arr(1, BMP_pixel_array_buffer); //1 because curr file already freed, so only need first and last freed
+        
+        //Creates the final looping animation based off of the first and last BMPs
+        BMP_handler[first_BMP_attr].animate_dir = draw_dir2num(cmd_file_data[file_count*2-1]);
+        files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[first_BMP_attr], argv[output_dir_argv], encode_type);
+        
+        //Free up the final values
+        free(BMP_handler[first_BMP_attr].BMP_pixel_array);
+        free(BMP_handler[last_BMP_attr].BMP_pixel_array);
+        //Free up the setup file read in 
         free_files_charpp(cmd_file_data, num_lines_in_file);
     }
-    free(name_of_new_file);
+
     return 0;
 }
