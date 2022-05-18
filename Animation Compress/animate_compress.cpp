@@ -295,7 +295,7 @@ char** read_cmd_file(int* num_lines_out, char* input_cmd_file_dir) {
         else {
             char new_line = '\n';
             char* end_line = strchr(cmd_file_out[num_lines], new_line);
-            *end_line = '\0';
+            *end_line = '\0'; 
         }
         num_lines++;
     }
@@ -326,11 +326,9 @@ char draw_dir2num(char* draw_dir) {
 
     for (int i = 0; i < 4; i++) {
         if (strcmp_sz((char*)total_dirs[i], draw_dir, total_dir_sz[i])) {
-            fprintf(stdout, "Draw dir:%s\n", draw_dir);
             return i;
         }
     }
-
     fprintf(stderr, "Invalid draw direction. Draw direction HAS to be lowercase and just the word and a new line character.");
     return 0xff; //-1 if fail
 }
@@ -400,11 +398,18 @@ void load_arf_num_entries(FILE * arf_file, int num_entries) {
 /**************************************************************************************************************
  *                 END ARF File Handler
  **************************************************************************************************************/
+//Free the BMP pixel array based on how many files have been processed so far. Greater than 1 will free all 3 of array
+void free_BMP_arr(int curr_file_count, int16_t** BMP_pixel_arr) {
+    for (int i = 0; i < 2*(curr_file_count > 0)+(curr_file_count>1); i++) {
+        free(BMP_pixel_arr[i]);
+    }
+    free(BMP_pixel_arr);
+}
 
 //The main function runs through and analyzes the information 
 int main(int argc, char *argv[])
 {   
-    char encode_type = 1;
+    char encode_type;
     char input_dir_file_str[512];
     char output_file_str[512];
     char last_file_str[256];
@@ -445,139 +450,88 @@ int main(int argc, char *argv[])
             //verify the name is a .bmp extension 
             if (!verify_bmp_file_name(extract_file_name(cmd_file_data[curr_file_num]))) {
                 fprintf(stderr, "ERROR, File Extension isn't exactly (.bmp). Case sensitive\n");
-                for (int i = 0; i < 2*(file_count > 0)+(file_count>1); i++) {
-                    free(BMP_pixel_array_buffer[i]);
-                }
-                free(BMP_pixel_array_buffer);
+                free_BMP_arr(file_count, BMP_pixel_array_buffer);
                 return 1;
             }
-
             //After the bmp file name has been verified, then verify the bmp itself 
             FILE * curr_file = fopen(cmd_file_data[curr_file_num], "rb"); 
             //if failed to open the current file, release info
             if (curr_file == NULL) {
                 fprintf(stderr, "ERROR, Failed to open file [%s]\n", cmd_file_data[curr_file_num]);
-                for (int i = 0; i < 2*(file_count > 0)+(file_count>1); i++) {
-                    free(BMP_pixel_array_buffer[i]);
-                }
-                free(BMP_pixel_array_buffer);
+                free_BMP_arr(file_count, BMP_pixel_array_buffer);
                 return 1;
             }
             //if the file isn't a valid bmp, free
             if(!verify_bmp(curr_file, &bmp_size, &bmp_offset)) {
                 fprintf(stderr, "Exiting Due to Failed BMP...\n");
-                for (int i = 0; i < 2*(file_count > 0)+(file_count>1); i++) {
-                    free(BMP_pixel_array_buffer[i]);
-                }
-                free(BMP_pixel_array_buffer);
-                
+                free_BMP_arr(file_count, BMP_pixel_array_buffer);
                 return 1;
             }
-  
-            //when on the first file, it gets stored into the 0th part of the buffer        
-            if (file_count == 0) {
-                fseek(curr_file, bmp_offset, SEEK_SET);
-                //Allocate the first file and last file values and store in the values
-                BMP_pixel_array_buffer[buffer_first_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                BMP_pixel_array_buffer[buffer_last_file]  = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                fprintf(stdout, "Bmp Offset: %x; BMP size: %x; BMP diff: %x\n", bmp_offset, bmp_size, bmp_size-bmp_offset);
-                fread(BMP_pixel_array_buffer[buffer_first_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
-                fseek(curr_file, bmp_offset, SEEK_SET);
-                fread(BMP_pixel_array_buffer[buffer_last_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
-                //if there was an error in loading the first and last files
-                if (memcmp(BMP_pixel_array_buffer[buffer_first_file], (BMP_pixel_array_buffer[buffer_last_file]), (bmp_size-bmp_offset)) != 0) {
-                    fprintf(stdout, "First file and Last file not identical\n");
-                }
-                //store the first file info
-                first_bmp_size = bmp_size; 
-                first_bmp_offset = bmp_offset;
 
-                strcpy(first_file_name, extract_file_name(cmd_file_data[curr_file_num])); //store the first file name for transitions from the last to first
-                strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
-                last_byte_size = (bmp_size-bmp_offset);
-            }
-            //On the second file 
-            else if (file_count == 1){
-                fseek(curr_file, bmp_offset, SEEK_SET);
-                //Verifies that the space to be allocated is valid
-                if (last_byte_size != (bmp_size-bmp_offset)) {
-                    fprintf(stderr, "Byte Size of Images are Different. Files: [%s->%s] Exiting...\n", last_file_str, cmd_file_data[curr_file_num]);
-                    free(BMP_pixel_array_buffer[buffer_first_file]);
-                    free(BMP_pixel_array_buffer[buffer_last_file]);
-                    free(BMP_pixel_array_buffer);
-                    
-                    return 1;
-                }
-                //Now that the size is valid, allocate the space and analyze it next to the first image
-                BMP_pixel_array_buffer[buffer_curr_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
+            switch(file_count) {
+                case 0:
+                //////////////////////////////////////////////////
+                    fseek(curr_file, bmp_offset, SEEK_SET);
+                    //Allocate the first file and last file values and store in the values
+                    BMP_pixel_array_buffer[buffer_first_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
+                    BMP_pixel_array_buffer[buffer_last_file]  = (int16_t*)malloc((bmp_size-bmp_offset)); 
+                    fprintf(stdout, "Bmp Offset: %x; BMP size: %x; BMP diff: %x\n", bmp_offset, bmp_size, bmp_size-bmp_offset);
+                    fread(BMP_pixel_array_buffer[buffer_first_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
+                    fseek(curr_file, bmp_offset, SEEK_SET);
+                    fread(BMP_pixel_array_buffer[buffer_last_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
 
-                //Now make the file that will store the cross between the last file and the current one. 
-                combine_file_names(name_of_new_file, last_file_str, extract_file_name(cmd_file_data[curr_file_num]));
-                file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
-                fprintf(stdout, "New File Name: %s\n", output_file_str);
+                    //store the first file info
+                    first_bmp_size = bmp_size; 
+                    first_bmp_offset = bmp_offset;
 
-                //Now, can finally create the output file and analyze it next to the original buffer
-                FILE * output_file = fopen(output_file_str, "wb");
-
-                //Load the output file binary
-                setup_arf(output_file, cmd_file_data[curr_file_num-1], encode_type);
-                int num_entries = load_arf_encode1(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), cmd_file_data[curr_file_num-1], output_file);
-                load_arf_num_entries(output_file, num_entries);
-
-                fclose(output_file);
-                //change the last file to what was the current file 
-                free(BMP_pixel_array_buffer[buffer_last_file]);
-                BMP_pixel_array_buffer[buffer_last_file] = BMP_pixel_array_buffer[buffer_curr_file];
-                strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
-                last_byte_size = (bmp_size-bmp_offset);
-            }
-            //for all other files after the first two 
-            else {
-                //Verifies that the space to be allocated is valid
-                if (last_byte_size != (bmp_size-bmp_offset)) {
-                    fprintf(stderr, "Byte Size of Images are Different. Files: [%s->%s] Exiting...\n", last_file_str, cmd_file_data[curr_file_num]);
-                    for (int i = 0; i < buffer_animation_files; i++) {
-                        free(BMP_pixel_array_buffer[i]);
+                    //Store the first and last file names and store the last byte size
+                    strcpy(first_file_name, extract_file_name(cmd_file_data[curr_file_num])); //store the first file name for transitions from the last to first
+                    strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
+                    last_byte_size = (bmp_size-bmp_offset);
+                /////////////////////////////////////////////////
+                break;
+                default:
+                //////////////////////////////////////////////////
+                    fseek(curr_file, bmp_offset, SEEK_SET);
+                    //Verifies that the space to be allocated is valid
+                    if (last_byte_size != (bmp_size-bmp_offset)) {
+                        fprintf(stderr, "Byte Size of Images are Different. Files: [%s->%s] Exiting...\n", last_file_str, cmd_file_data[curr_file_num]);
+                        free_BMP_arr(file_count, BMP_pixel_array_buffer);
+                        return 1;
                     }
-                    free(BMP_pixel_array_buffer);
-                    
-                    return 1;
-                }
-                fseek(curr_file, bmp_offset, SEEK_SET);
-                BMP_pixel_array_buffer[buffer_curr_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
-                fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
-                //Now make the file that will store the cross between the last file and the current one. 
-                combine_file_names(name_of_new_file, last_file_str, extract_file_name(cmd_file_data[curr_file_num]));
-                file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
-                fprintf(stdout, "New File Name: %s\n", output_file_str);
+                    //Now that the size is valid, allocate the space and analyze it next to the first image
+                    BMP_pixel_array_buffer[buffer_curr_file] = (int16_t*)malloc((bmp_size-bmp_offset)); 
+                    fread(BMP_pixel_array_buffer[buffer_curr_file], sizeof(int16_t), (bmp_size-bmp_offset)/2, curr_file);
 
-                //Now, can finally create the output file and analyze it next to the original buffer
-                FILE * output_file = fopen(output_file_str, "wb");
-                //Load the output file with the changing values
-                setup_arf(output_file, cmd_file_data[curr_file_num-1], encode_type);
-                int num_entries = load_arf_encode1(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), cmd_file_data[curr_file_num-1], output_file);
-                load_arf_num_entries(output_file, num_entries);
+                    //Now make the file that will store the cross between the last file and the current one. 
+                    combine_file_names(name_of_new_file, last_file_str, extract_file_name(cmd_file_data[curr_file_num]));
+                    file_name2output_dir(output_file_str, name_of_new_file, argv[output_dir_argv]);
+                    fprintf(stdout, "New File Name: %s\n", output_file_str);
 
-                fclose(output_file);
-                //change the last file to what was the current file 
-                free(BMP_pixel_array_buffer[buffer_last_file]);
-                BMP_pixel_array_buffer[buffer_last_file] = BMP_pixel_array_buffer[buffer_curr_file];
-                //Now, can finally create the output file and analyze it next to the original buffer
-                strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
-                last_byte_size = (bmp_size-bmp_offset);
+                    //Now, can finally create the output file and analyze it next to the original buffer
+                    FILE * output_file = fopen(output_file_str, "wb");
+
+                    //Load the output file binary
+                    setup_arf(output_file, cmd_file_data[curr_file_num-1], encode_type);
+                    int num_entries = load_arf_encode1(BMP_pixel_array_buffer[buffer_last_file], BMP_pixel_array_buffer[buffer_curr_file], (bmp_size-bmp_offset), cmd_file_data[curr_file_num-1], output_file);
+                    load_arf_num_entries(output_file, num_entries);
+
+                    fclose(output_file);
+                    //change the last file to what was the current file 
+                    free(BMP_pixel_array_buffer[buffer_last_file]);
+                    BMP_pixel_array_buffer[buffer_last_file] = BMP_pixel_array_buffer[buffer_curr_file];
+                    strcpy(last_file_str, extract_file_name(cmd_file_data[curr_file_num])); 
+                    last_byte_size = (bmp_size-bmp_offset);
+                /////////////////////////////////////////////////
+                break;
             }
-
             fclose(curr_file);
             file_count++;
         }
         //If there was only one file in the folder, fail code. 
         if (file_count == 1) {
             fprintf(stderr, "There was only one file in the folder, so no animation was possible.\n");
-            for (int i = 0; i < buffer_animation_files-1; i++) {
-                free(BMP_pixel_array_buffer[i]);
-            }
-            free(BMP_pixel_array_buffer);
+            free_BMP_arr(file_count, BMP_pixel_array_buffer);
             return 1;
         }
         //Now that all files have been processed, wrap from the last to the first image for seamless transition
@@ -594,10 +548,7 @@ int main(int argc, char *argv[])
         fclose(output_file);
 
         //Free all of the buffers 
-        for (int i = 0; i < buffer_animation_files-1; i++) {
-                free(BMP_pixel_array_buffer[i]);
-        }
-        free(BMP_pixel_array_buffer);
+        free_BMP_arr(1, BMP_pixel_array_buffer); //1 because curr file already freed, so only need first and last freed
         free_files_charpp(cmd_file_data, num_lines_in_file);
     }
     free(name_of_new_file);
