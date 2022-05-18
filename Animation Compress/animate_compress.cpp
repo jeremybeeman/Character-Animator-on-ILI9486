@@ -50,8 +50,8 @@
 //     Each Entry: 
 //              4-bytes: 2 for width position, 2 for height position
 //              2-bytes: R5G6B5 for that position
-#define offset2widthpos(offset) offset % s_width
-#define offset2heightpos(offset) (int32_t)(offset / s_width)
+#define offset2widthpos(offset) (int16_t)(offset % s_width)
+#define offset2heightpos(offset) (int16_t)(offset / s_width)
 
 //Testing Code:
 //gcc -Wall -Werror animate_compress.cpp -o animate_compress
@@ -386,6 +386,7 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
     int16_t pos_val;
     int count_change = 0;
     enum draw_direction draw_dir = curr_BMP->animate_dir;
+    fseek(output_file, 0x8, SEEK_SET);
     switch(draw_dir) {
         case up:
             for(int i = 0; i < (curr_BMP->size-curr_BMP->offset)/2; i++){
@@ -398,7 +399,7 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
                     pos_val = offset2heightpos(i);
                     fwrite(&pos_val, 2, 1, output_file);
                     //Write the int16_t value out
-                    fwrite(curr_BMP->BMP_pixel_array+i, 2, 1, output_file);
+                    fwrite((curr_BMP->BMP_pixel_array)+i, 2, 1, output_file);
                     count_change++;
                 }
             }
@@ -414,7 +415,7 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
                 pos_val = offset2heightpos(i);
                 fwrite(&pos_val, 2, 1, output_file);
                 //Write the int16_t value out
-                fwrite(curr_BMP->BMP_pixel_array+i, 2, 1, output_file);
+                fwrite((curr_BMP->BMP_pixel_array)+i, 2, 1, output_file);
                 count_change++;
             }
         }
@@ -519,6 +520,7 @@ int main(int argc, char *argv[])
                     }
                     //Fills the values of the BMP pixel array
                     BMP_handler[first_BMP_attr].BMP_pixel_array = (int16_t*)malloc((BMP_handler[first_BMP_attr].size-BMP_handler[first_BMP_attr].offset)); 
+                    fseek(BMP_handler[first_BMP_attr].BMP_file, BMP_handler[first_BMP_attr].offset, SEEK_SET);
                     fread(BMP_handler[first_BMP_attr].BMP_pixel_array, sizeof(int16_t), (BMP_handler[first_BMP_attr].size-BMP_handler[first_BMP_attr].offset)/2, BMP_handler[first_BMP_attr].BMP_file);
                     //Free up the BMP file
                     fclose(BMP_handler[first_BMP_attr].BMP_file);
@@ -542,6 +544,7 @@ int main(int argc, char *argv[])
                     }
                     //Fills the values of the BMP pixel array
                     BMP_handler[curr_BMP_attr].BMP_pixel_array = (int16_t*)malloc((BMP_handler[curr_BMP_attr].size-BMP_handler[curr_BMP_attr].offset)); 
+                    fseek(BMP_handler[curr_BMP_attr].BMP_file, BMP_handler[curr_BMP_attr].offset, SEEK_SET);
                     fread(BMP_handler[curr_BMP_attr].BMP_pixel_array, sizeof(int16_t), (BMP_handler[curr_BMP_attr].size-BMP_handler[curr_BMP_attr].offset)/2, BMP_handler[curr_BMP_attr].BMP_file);
                     //Fill in the draw direction
                     BMP_handler[curr_BMP_attr].animate_dir = draw_dir2num(cmd_file_data[curr_file_num-1]);
@@ -553,7 +556,8 @@ int main(int argc, char *argv[])
                     //allow for reallocation of data
                     if (file_count != 1)
                         free(BMP_handler[last_BMP_attr].BMP_pixel_array);
-
+                    
+                    BMP_handler[last_BMP_attr].BMP_pixel_array = NULL;
                     //Now move the data from the current file to the last file 
                     memcpy(&BMP_handler[last_BMP_attr], &BMP_handler[curr_BMP_attr], sizeof(struct BMP_attributes));
                 break;
