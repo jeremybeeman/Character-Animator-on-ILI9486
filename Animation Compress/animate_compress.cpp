@@ -50,14 +50,14 @@
 //     Each Entry: 
 //              4-bytes: 2 for width position, 2 for height position
 //              2-bytes: R5G6B5 for that position
-#define offset2widthpos(offset) (int16_t)(offset % s_width)
-#define offset2heightpos(offset) (int16_t)(offset / s_width)
+#define offset2widthpos(offset) (int16_t)((offset) % s_width)
+#define offset2heightpos(offset) (int16_t)((offset) / s_width)
+#define rowcol2offset(row, col, max_width) (uint32_t)(((row)*(max_width)) + (col))
 
 //Testing Code:
 //gcc -Wall -Werror animate_compress.cpp -o animate_compress
 //animate_compress.exe "D:\jjbee\OneDrive\projects\Art\Cotton Candy\Pink_Cotton_Candy\Blinking\BMP" this 
 //valgrind --leak-check=yes --track-origins=yes  ./animate_compress "Output/test.txt" Output
-
 /**************************************************************************************************************
  *                  BMP Handling 
  **************************************************************************************************************/
@@ -77,6 +77,7 @@ struct BMP_attributes {
     enum image_orientation orientation;
     enum draw_direction animate_dir;
     int16_t* BMP_pixel_array;
+    char* BMP_header;
 };
 
 //Extracts the extension after the ".". Only works if there are no other "."
@@ -153,6 +154,10 @@ bool verify_bmp(struct BMP_attributes* BMP_handler)
       fprintf(stderr, "Color needs to be R5G6B5\n");
       return false; 
      }
+    //load the BMP file header
+    fseek(BMP_handler->BMP_file, 0x0, SEEK_SET); 
+    BMP_handler->BMP_header = (char*)malloc(BMP_handler->offset); 
+    fread(BMP_handler->BMP_header, 1, BMP_handler->offset, BMP_handler->BMP_file);
     return true;
 }
 
@@ -161,10 +166,72 @@ void free_BMP_attr(BMP_attributes* BMP_handler) {
     free(BMP_handler->BMP_pixel_array);
     free(BMP_handler);
 }
+
 /**************************************************************************************************************
  *                  END BMP Handling 
  **************************************************************************************************************/
+/**************************************************************************************************************
+ *                  Matrix Manipulation
+ **************************************************************************************************************/
+//Flips the BMP pixel array with a space complexity of O(1)
+void flip_BMP_pixel_arr(struct BMP_attributes* BMP2flip, enum image_orientation axis2flip) {
+    switch (axis2flip) {
+        case vertical:
+            for (int16_t row_num = 0; row_num < BMP2flip->height/2; row_num++) {
+                for (int16_t col_num = 0; col_num < BMP2flip->width; col_num++) {
+                    int16_t temp_int16 = BMP2flip->BMP_pixel_array[rowcol2offset(row_num, col_num, BMP2flip->width)];
+                    BMP2flip->BMP_pixel_array[rowcol2offset(row_num, col_num, BMP2flip->width)] = BMP2flip->BMP_pixel_array[rowcol2offset(BMP2flip->height-1-row_num, col_num, BMP2flip->width)];
+                    BMP2flip->BMP_pixel_array[rowcol2offset(BMP2flip->height-1-row_num, col_num, BMP2flip->width)] = temp_int16;
+                }
+            }
+        break;
+        case horizontal:
+            for (int16_t col_num = 0; col_num < BMP2flip->width/2; col_num++) {
+                for (int16_t row_num = 0; row_num < BMP2flip->height; row_num++) {
+                    int16_t temp_int16 = BMP2flip->BMP_pixel_array[rowcol2offset(row_num, col_num, BMP2flip->width)];
+                    BMP2flip->BMP_pixel_array[rowcol2offset(row_num, col_num, BMP2flip->width)] = BMP2flip->BMP_pixel_array[rowcol2offset(row_num, BMP2flip->width-1-col_num, BMP2flip->width)];
+                    BMP2flip->BMP_pixel_array[rowcol2offset(row_num, BMP2flip->width-1-col_num, BMP2flip->width)] = temp_int16;
+                }
+            }
+        break;
+    }
+}
 
+enum rotate {CW=0, CCW=1, clockwise=0, counter_clockwise=1};
+//Rotates the BMP pixel array clockwise or counter clockwise. Space complexity O((N*M))
+void rotate_BMP_pixel_arr(struct BMP_attributes* BMP2rot, enum rotate rotate_dir) {
+    int16_t* new_BMP_pixel_arr = (int16_t*)malloc(BMP2rot->size-BMP2rot->offset); 
+    uint16_t insert_col_num = BMP2rot->height-1;
+    switch(rotate_dir) {
+        case CCW:
+            for (uint16_t row_num = 0; row_num < BMP2rot->height; row_num++) {
+                for (uint16_t col_num = 0; col_num < BMP2rot->width; col_num++) {
+                    new_BMP_pixel_arr[rowcol2offset(col_num, insert_col_num, BMP2rot->height)] = BMP2rot->BMP_pixel_array[rowcol2offset(row_num, col_num, BMP2rot->width)];
+                }  
+                insert_col_num--;
+            }
+        break;
+        case CW: 
+            
+            for (uint16_t row_num = 0; row_num < BMP2rot->height; row_num++) {
+                int insert_row_num = BMP2rot->width-1;
+                for (uint16_t col_num = 0; col_num < BMP2rot->width; col_num++) {
+                    new_BMP_pixel_arr[rowcol2offset(insert_row_num, row_num, BMP2rot->height)] = BMP2rot->BMP_pixel_array[rowcol2offset(row_num, col_num, BMP2rot->width)];
+                    insert_row_num--;
+                }     
+            }
+        break;
+    }
+    free(BMP2rot->BMP_pixel_array);
+    BMP2rot->BMP_pixel_array = new_BMP_pixel_arr;
+    int temp_width = BMP2rot->width;
+    BMP2rot->width = BMP2rot->height; 
+    BMP2rot->height = temp_width;
+}
+
+/**************************************************************************************************************
+ *                  END Matrix Manipulation
+ **************************************************************************************************************/
 /**************************************************************************************************************
  *                  File Handling 
  **************************************************************************************************************/
@@ -382,7 +449,7 @@ void setup_arf(FILE * arf_file, enum draw_direction animate_dir, char encode_typ
 //loads the output binary file with the pixels different between the last slide and current slide
 //outputs the number of entries into the file (actual file size is entries*6bytes+6)
 //uses the encoding type 1
-int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, FILE* output_file){//int16_t* last_BMP_pixel_arr, int16_t* curr_BMP_pixel_arr, int bmp_pixel_arr_size, char* draw_dir, FILE * output_file) {
+int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, FILE* output_file){
     int16_t pos_val;
     int count_change = 0;
     enum draw_direction draw_dir = curr_BMP->animate_dir;
@@ -392,7 +459,6 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
             for(int i = 0; i < (curr_BMP->size-curr_BMP->offset)/2; i++){
                 //If the file's value is not the same, isolate and store
                 if (last_BMP->BMP_pixel_array[i] != curr_BMP->BMP_pixel_array[i]) {
-                    //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
                     //Find the width and height positions for the differing pixels 
                     pos_val = offset2widthpos(i);
                     fwrite(&pos_val, 2, 1, output_file);
@@ -408,7 +474,6 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
         for(int i = (curr_BMP->size-curr_BMP->offset)/2 -1; i >= 0; i--){
             //If the file's value is not the same, isolate and store
             if (last_BMP->BMP_pixel_array[i] != curr_BMP->BMP_pixel_array[i]) {
-                //fprintf(stdout, "diff: [%x, %x]\n", BMP_pixel_array_buffer[buffer_last_file][i], BMP_pixel_array_buffer[buffer_curr_file][i]);
                 //Find the width and height positions for the differing pixels 
                 pos_val = offset2widthpos(i);
                 fwrite(&pos_val, 2, 1, output_file);
@@ -420,7 +485,7 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
             }
         }
         break;
-        default: 
+        default: //to expand into
 
         break;
     }
@@ -461,6 +526,30 @@ void free_BMP_arr(int curr_file_count, int16_t** BMP_pixel_arr) {
         free(BMP_pixel_arr[i]);
     }
     free(BMP_pixel_arr);
+}
+
+//Takes the .bmp header and the new width and height and the pixel array and outputs a .bmp
+void BMP_attr2BMP(BMP_attributes* BMP2Create, char* BMP_file_dir, char* BMP_file_name) {
+    char combined_BMP_file_dir[512];
+    directory_file_combine(combined_BMP_file_dir, BMP_file_dir, BMP_file_name); 
+    FILE* BMP_filep = fopen(combined_BMP_file_dir, "w+");
+    if (BMP_filep == NULL) {
+        fprintf(stderr, "Failed to create the BMP file");
+        return;
+    }
+    //write the last BMP header stored into the new file 
+    fwrite(BMP2Create->BMP_header, 1, BMP2Create->offset, BMP_filep);
+    //Move to where to write the width and height
+    fseek(BMP_filep, 0x12, SEEK_SET); 
+    //replace the size with the updated size. Nothing else should have changed, as the image shouldn't get bigger
+    fwrite(&(BMP2Create->width), sizeof(int), 1, BMP_filep);//write width
+    fwrite(&(BMP2Create->height), sizeof(int), 1, BMP_filep);//write height
+
+    //write out the pixel array
+    fseek(BMP_filep, BMP2Create->offset, SEEK_SET);
+    fwrite(BMP2Create->BMP_pixel_array, sizeof(int16_t), (BMP2Create->size-BMP2Create->offset)/2, BMP_filep);
+    fclose(BMP_filep);
+    
 }
 
 //The main function runs through and analyzes the information 
@@ -554,9 +643,10 @@ int main(int argc, char *argv[])
                     //Free up the BMP file
                     fclose(BMP_handler[curr_BMP_attr].BMP_file);
                     //allow for reallocation of data
-                    if (file_count != 1)
+                    if (file_count != 1) {
                         free(BMP_handler[last_BMP_attr].BMP_pixel_array);
-                    
+                        free(BMP_handler[last_BMP_attr].BMP_header);
+                    }
                     BMP_handler[last_BMP_attr].BMP_pixel_array = NULL;
                     //Now move the data from the current file to the last file 
                     memcpy(&BMP_handler[last_BMP_attr], &BMP_handler[curr_BMP_attr], sizeof(struct BMP_attributes));
@@ -573,10 +663,11 @@ int main(int argc, char *argv[])
         //Creates the final looping animation based off of the first and last BMPs
         BMP_handler[first_BMP_attr].animate_dir = draw_dir2num(cmd_file_data[file_count*2-1]);
         files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[first_BMP_attr], argv[output_dir_argv], encode_type);
-        
         //Free up the final values
         free(BMP_handler[first_BMP_attr].BMP_pixel_array);
         free(BMP_handler[last_BMP_attr].BMP_pixel_array);
+        for (int i = 0; i < total_BMP_attr-1; i++)
+            free(BMP_handler[i].BMP_header);
         //Free up the setup file read in 
         free_files_charpp(cmd_file_data, num_lines_in_file);
     }
