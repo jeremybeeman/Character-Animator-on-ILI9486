@@ -535,8 +535,322 @@ int load_arf_encode1(struct BMP_attributes* last_BMP, struct BMP_attributes* cur
             fprintf(stderr, "Invalid direction\n");
         break;
     }
-    fprintf(stdout, "Count Changes: %d\n", count_change);
+    fprintf(stdout, "Encode 1 Count Changes: %d\n", count_change);
     return count_change;
+}
+
+//loads the output binary file with the pixels different between the last slide and current slide
+//outputs the number of entries into the file (entries are variable size, but its size is specified per line)
+//uses the encoding type 2
+int load_arf_encode2(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, FILE* output_file){
+    int16_t temp_val;
+    int num_entries = 0;
+    enum draw_direction draw_dir = curr_BMP->animate_dir;
+    fseek(output_file, 0x8, SEEK_SET);
+    //fprintf(stdout, "before draw_dir: %d, last_orient %d, curr_orient %d\n", (int)draw_dir, (int)last_BMP->orientation, (int)curr_BMP->orientation);  
+    uint32_t offset4num_entries_on_row;
+    uint32_t output_file_offset = 0x8;
+    switch(draw_dir) {
+        case up:
+        /////////////////////////////////////////////////////////////////////////////
+            for(int16_t row_num=0; row_num < s_height; row_num++ ){
+                int num_entries_on_row = 0;
+                int16_t last_color;
+                bool on_line = false;
+                for (int16_t col_num=0; col_num < s_width; col_num++) {
+                    if (last_BMP->BMP_pixel_array[row_num*s_width+col_num] != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                        if (num_entries_on_row == 0) {
+                            fwrite(&row_num, 2, 1, output_file);
+                            output_file_offset+=2;
+                            offset4num_entries_on_row = output_file_offset;//store where the num_entries_on_row is at
+                            temp_val = 0xABCD;
+                            fwrite(&temp_val, 2, 1, output_file);//creates space for the num_entries_on_row
+                            last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                            fwrite(&last_color, 2, 1, output_file);//write out the color
+                            fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                            num_entries_on_row++;
+                            num_entries++;//set up that there is a new entry
+                            output_file_offset+=6;//go to the next offset
+                            on_line = true; 
+                        }
+                        else {
+                            //if we're on a line and we're at the change in color, change the color
+                            if (on_line) {
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num]; 
+                                    temp_val = col_num-1;
+                                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                                    fwrite(&last_color, 2, 1, output_file);//write out the color
+                                    fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                    num_entries_on_row++;
+                                    output_file_offset+=6;//go to the next offset
+                                    on_line = true; 
+                                }
+                            }
+                            else {
+                                //set the last color to the current color if different
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num])
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                                //if we're not on a line, then we're now on a new line and add the new color and start pos
+                                fwrite(&last_color, 2, 1, output_file);//write out the color
+                                fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                num_entries_on_row++;
+                                output_file_offset+=4;//go to the next offset
+                                on_line = true; 
+                            }
+                        }
+                    }
+                    else {
+                        //if we aren't on changing bits, then if we were on a line, end that line
+                        if (on_line) {
+                            temp_val = col_num-1;
+                            fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                            output_file_offset+=2;
+                            on_line = false; 
+                        }
+                    }
+                }
+                if (on_line) {
+                    temp_val = s_width-1;
+                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                    output_file_offset+=2;
+                    on_line = false; 
+                }
+                //if there was an entry on the row, fill in the entry number 
+                if (num_entries_on_row > 0) {
+                    fseek(output_file, offset4num_entries_on_row, SEEK_SET); 
+                    fwrite(&num_entries_on_row, 2, 1, output_file); 
+                    fseek(output_file, output_file_offset, SEEK_SET);
+                }
+            }
+        break;
+        case down:
+        /////////////////////////////////////////////////////////////////////////////
+            for(int16_t row_num=s_height-1; row_num >= 0; row_num--){
+                int num_entries_on_row = 0;
+                int16_t last_color;
+                bool on_line = false;
+                for (int16_t col_num=0; col_num < s_width; col_num++) {
+                    if (last_BMP->BMP_pixel_array[row_num*s_width+col_num] != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                        if (num_entries_on_row == 0) {
+                            fwrite(&row_num, 2, 1, output_file);
+                            output_file_offset+=2;
+                            offset4num_entries_on_row = output_file_offset;//store where the num_entries_on_row is at
+                            temp_val = 0xABCD;
+                            fwrite(&temp_val, 2, 1, output_file);//creates space for the num_entries_on_row
+                            last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                            fwrite(&last_color, 2, 1, output_file);//write out the color
+                            fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                            num_entries_on_row++;
+                            num_entries++;//set up that there is a new entry
+                            output_file_offset+=6;//go to the next offset
+                            on_line = true; 
+                        }
+                        else {
+                            //if we're on a line and we're at the change in color, change the color
+                            if (on_line) {
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num]; 
+                                    temp_val = col_num-1;
+                                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                                    fwrite(&last_color, 2, 1, output_file);//write out the color
+                                    fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                    num_entries_on_row++;
+                                    output_file_offset+=6;//go to the next offset
+                                    on_line = true; 
+                                }
+                            }
+                            else {
+                                //set the last color to the current color if different
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num])
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                                //if we're not on a line, then we're now on a new line and add the new color and start pos
+                                fwrite(&last_color, 2, 1, output_file);//write out the color
+                                fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                num_entries_on_row++;
+                                output_file_offset+=4;//go to the next offset
+                                on_line = true; 
+                            }
+                        }
+                    }
+                    else {
+                        //if we aren't on changing bits, then if we were on a line, end that line
+                        if (on_line) {
+                            temp_val = col_num-1;
+                            fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                            output_file_offset+=2;
+                            on_line = false; 
+                        }
+                    }
+                }
+                if (on_line) {
+                    temp_val = s_width-1;
+                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                    output_file_offset+=2;
+                    on_line = false; 
+                }
+                //if there was an entry on the row, fill in the entry number 
+                if (num_entries_on_row > 0) {
+                    fseek(output_file, offset4num_entries_on_row, SEEK_SET); 
+                    fwrite(&num_entries_on_row, 2, 1, output_file); 
+                    fseek(output_file, output_file_offset, SEEK_SET);
+                }
+            }
+        break; 
+        case left:
+        /////////////////////////////////////////////////////////////////////////////
+            for(int16_t col_num=0; col_num < s_width; col_num++){
+                int num_entries_on_row = 0;
+                int16_t last_color;
+                bool on_line = false;
+                for (int16_t row_num=0; row_num < s_height; row_num++) {
+                    if (last_BMP->BMP_pixel_array[row_num*s_width+col_num] != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                        if (num_entries_on_row == 0) {
+                            fwrite(&row_num, 2, 1, output_file);
+                            output_file_offset+=2;
+                            offset4num_entries_on_row = output_file_offset;//store where the num_entries_on_row is at
+                            temp_val = 0xABCD;
+                            fwrite(&temp_val, 2, 1, output_file);//creates space for the num_entries_on_row
+                            last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                            fwrite(&last_color, 2, 1, output_file);//write out the color
+                            fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                            num_entries_on_row++;
+                            num_entries++;//set up that there is a new entry
+                            output_file_offset+=6;//go to the next offset
+                            on_line = true; 
+                        }
+                        else {
+                            //if we're on a line and we're at the change in color, change the color
+                            if (on_line) {
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num]; 
+                                    temp_val = col_num-1;
+                                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                                    fwrite(&last_color, 2, 1, output_file);//write out the color
+                                    fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                    num_entries_on_row++;
+                                    output_file_offset+=6;//go to the next offset
+                                    on_line = true; 
+                                }
+                            }
+                            else {
+                                //set the last color to the current color if different
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num])
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                                //if we're not on a line, then we're now on a new line and add the new color and start pos
+                                fwrite(&last_color, 2, 1, output_file);//write out the color
+                                fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                num_entries_on_row++;
+                                output_file_offset+=4;//go to the next offset
+                                on_line = true; 
+                            }
+                        }
+                    }
+                    else {
+                        //if we aren't on changing bits, then if we were on a line, end that line
+                        if (on_line) {
+                            temp_val = col_num-1;
+                            fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                            output_file_offset+=2;
+                            on_line = false; 
+                        }
+                    }
+                }
+                if (on_line) {
+                    temp_val = s_width-1;
+                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                    output_file_offset+=2;
+                    on_line = false; 
+                }
+                //if there was an entry on the row, fill in the entry number 
+                if (num_entries_on_row > 0) {
+                    fseek(output_file, offset4num_entries_on_row, SEEK_SET); 
+                    fwrite(&num_entries_on_row, 2, 1, output_file); 
+                    fseek(output_file, output_file_offset, SEEK_SET);
+                }
+            }
+        break; 
+        case right:
+        /////////////////////////////////////////////////////////////////////////////
+            for(int16_t col_num=s_width-1; col_num >= 0; col_num--){
+                int num_entries_on_row = 0;
+                int16_t last_color;
+                bool on_line = false;
+                for (int16_t row_num=0; row_num < s_height; row_num++) {
+                    if (last_BMP->BMP_pixel_array[row_num*s_width+col_num] != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                        if (num_entries_on_row == 0) {
+                            fwrite(&row_num, 2, 1, output_file);
+                            output_file_offset+=2;
+                            offset4num_entries_on_row = output_file_offset;//store where the num_entries_on_row is at
+                            temp_val = 0xABCD;
+                            fwrite(&temp_val, 2, 1, output_file);//creates space for the num_entries_on_row
+                            last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                            fwrite(&last_color, 2, 1, output_file);//write out the color
+                            fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                            num_entries_on_row++;
+                            num_entries++;//set up that there is a new entry
+                            output_file_offset+=6;//go to the next offset
+                            on_line = true; 
+                        }
+                        else {
+                            //if we're on a line and we're at the change in color, change the color
+                            if (on_line) {
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num]) {
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num]; 
+                                    temp_val = col_num-1;
+                                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                                    fwrite(&last_color, 2, 1, output_file);//write out the color
+                                    fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                    num_entries_on_row++;
+                                    output_file_offset+=6;//go to the next offset
+                                    on_line = true; 
+                                }
+                            }
+                            else {
+                                //set the last color to the current color if different
+                                if (last_color != curr_BMP->BMP_pixel_array[row_num*s_width+col_num])
+                                    last_color = curr_BMP->BMP_pixel_array[row_num*s_width+col_num];
+                                //if we're not on a line, then we're now on a new line and add the new color and start pos
+                                fwrite(&last_color, 2, 1, output_file);//write out the color
+                                fwrite(&col_num, 2, 1, output_file);//write out the starting width
+                                num_entries_on_row++;
+                                output_file_offset+=4;//go to the next offset
+                                on_line = true; 
+                            }
+                        }
+                    }
+                    else {
+                        //if we aren't on changing bits, then if we were on a line, end that line
+                        if (on_line) {
+                            temp_val = col_num-1;
+                            fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                            output_file_offset+=2;
+                            on_line = false; 
+                        }
+                    }
+                }
+                if (on_line) {
+                    temp_val = s_width-1;
+                    fwrite(&temp_val, 2, 1, output_file);//write out the finished width
+                    output_file_offset+=2;
+                    on_line = false; 
+                }
+                //if there was an entry on the row, fill in the entry number 
+                if (num_entries_on_row > 0) {
+                    fseek(output_file, offset4num_entries_on_row, SEEK_SET); 
+                    fwrite(&num_entries_on_row, 2, 1, output_file); 
+                    fseek(output_file, output_file_offset, SEEK_SET);
+                }
+            }
+        break;
+        case invalid: 
+            fprintf(stderr, "Invalid direction\n");
+            return 0;
+        break;
+    }
+
+    fprintf(stdout, "Encode 2 Count Changes: %d\n", num_entries);
+    return num_entries;
 }
 
 //load the arf file with the number of entries in the file. Used to know when at the end of the file
@@ -558,7 +872,16 @@ void files2arf(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP,
 
     //Load the output file binary
     setup_arf(output_file, curr_BMP->animate_dir, encode_type);
-    int num_entries = load_arf_encode1(last_BMP, curr_BMP, output_file);
+    int num_entries;
+    switch(encode_type) {
+        case 1:
+            num_entries = load_arf_encode1(last_BMP, curr_BMP, output_file);
+        break; 
+        case 2:
+            num_entries = load_arf_encode2(last_BMP, curr_BMP, output_file);
+        break;
+
+    }
     load_arf_num_entries(output_file, num_entries);
 
     fclose(output_file);
@@ -610,10 +933,15 @@ int main(int argc, char *argv[])
         if (argc >= 4) {
             if (strcmp(argv[3], "1") == 0)
                 encode_type = 1;
+            else if (strcmp(argv[3], "2") == 0)
+                encode_type = 2;
+            else
+                encode_type = 1;
         }
         else {
             encode_type = 1;
         }
+        fprintf(stdout, "Encode Type: %d\n\n", encode_type);
         //Store the input file's directory
         strcpy(input_dir_file_str, argv[input_dir_argv]);
         int num_lines_in_file;
@@ -634,6 +962,7 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "ERROR, File Extension isn't exactly (.bmp). Case sensitive\n");
                 return 1;
             }
+            fprintf(stdout, "curr file num: %d\n", curr_file_num);
 
             //this switch sets up BMP files and analyzes them
             switch(file_count) {
