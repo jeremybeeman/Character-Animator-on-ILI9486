@@ -19,6 +19,7 @@
 
 //TO DO:
 //1. Allow for the .txt file to specify comments, output file, encoding type
+//2. Modify so it can work on windows AND on linux (even if windows doesn't have valgrind)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,13 +272,19 @@ void directory_file_combine(char * input_file_str, char * input_dir_str, char * 
 }
 
 //Combines two names for files and spits out a .arf file
-void combine_file_names(char * name_of_new_file, char * last_file_str, char * curr_file_str) {
+void combine_file_names(char * name_of_new_file, char * last_file_str, char * curr_file_str, int file_count) {
     strcpy(name_of_new_file, last_file_str);
     name_of_new_file[strlen(name_of_new_file)-sizeof_BMP_name] = '\0';
     strcat(name_of_new_file, "2");
     strcat(name_of_new_file, curr_file_str);
+    //Identify where the .bmp is so it can be written over
+    char* bmp_loc = extract_extension(name_of_new_file);
+    //add the file count 
+    char file_chr[32]; //as big as the int can be
+    sprintf(file_chr, "_%d", file_count);
+    strcpy(bmp_loc, file_chr);
     //.arf stands for animation rendering file
-    strcpy(name_of_new_file+strlen(name_of_new_file)-sizeof_BMP_name, ".arf");
+    strcat(name_of_new_file+strlen(name_of_new_file)-sizeof_BMP_name, ".arf\0");
 }
 //Combines the output file directory with the file name
 void file_name2output_dir(char * output_file_str, char * name_of_file, char * output_dir) {
@@ -285,6 +292,7 @@ void file_name2output_dir(char * output_file_str, char * name_of_file, char * ou
     strcat(output_file_str, "/");//ONLY on WSL
     strcat(output_file_str, name_of_file);
 }
+
 /**************************************************************************************************************
  *                  END File Handling 
  **************************************************************************************************************/
@@ -859,11 +867,11 @@ void load_arf_num_entries(FILE * arf_file, int num_entries) {
     fwrite(&num_entries, sizeof(int), 1, arf_file);
 }
 //Taking in BMP attributes, creates the output files and spits out data to them
-void files2arf(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, char* output_dir, char encode_type) {
+void files2arf(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP, char* output_dir, int file_count, char encode_type) {
     char name_of_output_file[512];
     char output_file_str[512];
     //First create the name of the output file
-    combine_file_names(name_of_output_file, last_BMP->file_name, curr_BMP->file_name);
+    combine_file_names(name_of_output_file, last_BMP->file_name, curr_BMP->file_name, file_count);
     file_name2output_dir(output_file_str, name_of_output_file, output_dir);
     fprintf(stdout, "New File Name: %s\n", output_file_str);
 
@@ -1018,7 +1026,7 @@ int main(int argc, char *argv[])
                     //Free up the BMP file
                     fclose(BMP_handler[curr_BMP_attr].BMP_file);
                     //Now that the files have been properly loaded in, now they can be analyzed
-                    files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[curr_BMP_attr], argv[output_dir_argv], encode_type);
+                    files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[curr_BMP_attr], argv[output_dir_argv], file_count, encode_type);
                     //allow for reallocation of data
                     free(BMP_handler[last_BMP_attr].BMP_pixel_array);
                     free(BMP_handler[last_BMP_attr].BMP_header);
@@ -1038,7 +1046,7 @@ int main(int argc, char *argv[])
         
         //Creates the final looping animation based off of the first and last BMPs
         BMP_handler[first_BMP_attr].animate_dir = draw_dir2num(cmd_file_data[file_count*2-1]);
-        files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[first_BMP_attr], argv[output_dir_argv], encode_type);
+        files2arf(&BMP_handler[last_BMP_attr], &BMP_handler[first_BMP_attr], argv[output_dir_argv], file_count, encode_type);
         //Free up the final values
         free(BMP_handler[first_BMP_attr].BMP_pixel_array);
         free(BMP_handler[last_BMP_attr].BMP_pixel_array);
