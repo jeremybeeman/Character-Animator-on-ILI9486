@@ -24,11 +24,11 @@ The ARF file (or Animation Rendering File) is a file type used to store the TFT 
 This encoding type uses the Entries number stored at a 0x4 offset in order to formulate a pixel-based image. All entries draw singular pixels. These pixels were chosen as the colors that were changing from the last frame. This is a basic method and can be slower than other encoding types, mainly because it waits to draw singular pixels instead of drawing groups. This file type can also be bigger than a standard BMP, because it adds the width and height locations on top of the colors. 
 
 How each Entry is arranged:
-| Data Value                                      | Offset   | Bytes Used   |
-|:-----------------------------------------------:|:--------:|:-------------|
-| width x location                                | 0x0      |   2          |
-| height y location                               | 0x2      |   2          |
-| color                                           | 0x4      |   2          |
+| Data Value                                      | Offset from Start of Entry  | Bytes Used   |
+|:-----------------------------------------------:|:---------------------------:|:-------------|
+| width x location                                | 0x0                         |   2          |
+| height y location                               | 0x2                         |   2          |
+| color                                           | 0x4                         |   2          |
 
 ### Encoding Type 2
 This encoding type is created for lines. Its whole type finds similar colors and then creates lines based on the similar colors. This works well for the animations that I am working with (it has been significantly faster with the LCDWiki I am using). However, the file sizes can be very large if there are a lot of color changes. This is great for cartoons that are pretty consistent in coloring and slightly changes colors per frame. 
