@@ -47,14 +47,18 @@
 #define output_dir_argv 2
 
 //Output File Organization: 
-//     Encode Type: 1
-//     Extension: .bin 
-//     Each Entry: 
-//              4-bytes: 2 for width position, 2 for height position
-//              2-bytes: R5G6B5 for that position
+//     Encode Type: 1 and 2
+//     Extension: .arf
 #define offset2widthpos(offset) (int16_t)((offset) % s_width)
 #define offset2heightpos(offset) (int16_t)((offset) / s_width)
 #define rowcol2offset(row, col, max_width) (uint32_t)(((row)*(max_width)) + (col))
+
+//The macros for defining if we're on windows or linux. For file handling 
+#if defined(_WIN32) || defined(WIN32) || defined(__CYGWIN__) || defined(__MINGW32__) || defined(__BORLANDC__)
+#define slash_chr 0
+#else 
+#define slash_chr 1
+#endif
 
 //Testing Code:
 //gcc -Wall -Werror animate_compress.cpp -o animate_compress
@@ -254,7 +258,15 @@ bool strcmp_sz(char* str1, char* str2, int sz) {
 }
 //extracts the file name from a char* with the file name and file extension
 char* extract_file_name(char* file_dir_name) {
-    char slash = '/';//for WSL Linux for now
+    char slash;
+    switch(slash_chr) {
+        case 0: //windows
+            slash = '\\';
+        break;
+        case 1: //linux
+            slash = '/';
+        break;
+    }
     char* file_loc = NULL;
     char* next_file_loc = strchr(file_dir_name, slash);
     while (next_file_loc) {
@@ -267,7 +279,16 @@ char* extract_file_name(char* file_dir_name) {
 //combines the directory and the file name together and outputs it
 void directory_file_combine(char * input_file_str, char * input_dir_str, char * input_file_name) {
         strcpy(input_file_str, input_dir_str);
-        strcat(input_file_str, "/"); //need to change for windows. On WSL
+        char slash;
+        switch(slash_chr) {
+            case 0: //windows
+                slash = '\\';
+            break;
+            case 1: //linux
+                slash = '/';
+            break;
+        }
+        strcat(input_file_str, &slash); 
         strcat(input_file_str, input_file_name);
 }
 
@@ -289,7 +310,16 @@ void combine_file_names(char * name_of_new_file, char * last_file_str, char * cu
 //Combines the output file directory with the file name
 void file_name2output_dir(char * output_file_str, char * name_of_file, char * output_dir) {
     strcpy(output_file_str, output_dir);
-    strcat(output_file_str, "/");//ONLY on WSL
+    char slash;
+    switch(slash_chr) {
+        case 0: //windows
+            slash = '\\';
+        break;
+        case 1: //linux
+            slash = '/';
+        break;
+    }
+    strcat(output_file_str, &slash);
     strcat(output_file_str, name_of_file);
 }
 
