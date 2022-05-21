@@ -6,20 +6,18 @@
 //Finally, one byte to specify which type of encoding
 //Encode of 1:
 //  Holds data in this form: [x_location16, y_location16, r5g6b5]. This way for all entries
+//Encode of 2:
+//  Holds data in this form: [y_location16, num_x_location_entries16, [r6g6b5, x_location_startN, x_location_endN]]
 //Stores the data into .arf files (animation rendering format)
 
-
 //NOTES:
-//5/11/2022: This code is currently only made to work on Linux WSL
 //5/16/2022: Modifying from just folder input and folder output to i/o in multiple ways
 //5/16/2022: For verifying the bmp, case sensitive (has to be lower case), also can't have . in any names of folders
 //5/19/2022: All images assume one direction: start at up (where image is shown upright)
 //           Recommended that all images are set up upright and drawing direction is specified via directions
-//5/20/2022: Right now, all images have to have unique names to create the animations. Will need to modify
 
 //TO DO:
-//1. Allow for the .txt file to specify comments, output file, encoding type
-//2. Modify so it can work on windows AND on linux (even if windows doesn't have valgrind)
+//1. Allow for the .txt file to specify comments, output file, encoding type (maybe)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -927,6 +925,7 @@ void files2arf(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP,
 /**************************************************************************************************************
  *                 END ARF File Handler
  **************************************************************************************************************/
+
 //Free the BMP pixel array based on how many files have been processed so far. Greater than 1 will free all 3 of array
 void free_BMP_arr(int curr_file_count, int16_t** BMP_pixel_arr) {
     for (int i = 0; i < 2*(curr_file_count > 0)+(curr_file_count>1); i++) {
