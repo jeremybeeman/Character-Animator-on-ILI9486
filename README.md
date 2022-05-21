@@ -7,6 +7,7 @@ This repo handles the animation of 2D characters on the ILI9486. The repo uses t
   * [Introduction](#introduction)
   * [Header](#header)
   * [Encoding Type 1](#encoding-type-1)
+  * [Encoding Type 2](#encoding-type-2)
 
 ## ARF File
 ### Introduction 
@@ -30,4 +31,12 @@ How each Entry is arranged:
 | color                                           | 0x4      |   2          |
 
 ### Encoding Type 2
+This encoding type is created for lines. Its whole type finds similar colors and then creates lines based on the similar colors. This works well for the animations that I am working with (it has been significantly faster with the LCDWiki I am using). However, the file sizes can be very large if there are a lot of color changes. This is great for cartoons that are pretty consistent in coloring and slightly changes colors per frame. 
+
+The organization of the data is split into 2 parts: The row header and the column entries. The row header is the same 4 byte size for all lines. The column entries, however, are flexible in size and vary based on how much colors are changing on a row. 
+
+|          | Row Header |                            |                |    Column Entries |                |
+|:--------:|:----------:|:--------------------------:|:--------------:|:-----------------:|:--------------:|
+|          | y location |number of color lines in row| color          |  start x location | end x location |
+|Byte Count|   2        |         2                  |     2          |       2           |       2        |
 
