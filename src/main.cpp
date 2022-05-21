@@ -69,6 +69,13 @@ const char * vert_tobl_loop[tobl_loop] = {
       "tobl/04.arf", 
 };
 
+#define t1 3
+const char * t1_loop[t1] = {
+      "tobl/tobl1.bmp", 
+      "t1/01.arf", 
+      "t1/02.arf", 
+};
+
 char * sbuf = (char*)malloc(300);
 
 uint16_t read_16(File fp)
@@ -240,13 +247,14 @@ void init_SD_display() {
     }
 }
 
-bool verify_arf(File arf_fp, uint32_t* arf_num_entries, char* encode_type) {
+bool verify_arf(File arf_fp, uint32_t* arf_num_entries, char* draw_dir, char* encode_type) {
   if (read_16(arf_fp) != 0x5241) { //0x5241 is "AR"
     Serial.println("Non valid ARF file. Doesn't have correct header format.");
     return false; 
   }
 
   *arf_num_entries = read_32(arf_fp); //read in the number of entries 
+  *draw_dir = arf_fp.read();
   *encode_type = arf_fp.read(); //read in the encoding type (How entries arranged)
   //Serial.print("NE: ");
   //Serial.print(*arf_num_entries); 
@@ -255,10 +263,47 @@ bool verify_arf(File arf_fp, uint32_t* arf_num_entries, char* encode_type) {
   return true;
   
 }
+
+void print_arf_dir_encode1(File arf_file, uint32_t arf_num_entries, char draw_dir) {
+    int16_t* entries_buff = (int16_t*)malloc(sizeof(int16_t)*3); //3 because 2-byte xpos, 2-byte y-pos, 2-byte rgb
+    //loop through all of the entries, reading them in and printing their values to the screen
+    int16_t last_color = 0x00; 
+    my_lcd.Set_Draw_color(last_color);
+    for (uint32_t i = 0; i < arf_num_entries; i++) {
+      arf_file.read(entries_buff, sizeof(int16_t)*3); 
+      //sprintf(sbuf, "E#%d, [%d, %d, %x]", i, entries_buff[0], entries_buff[1], entries_buff[2]);
+      //Serial.println(sbuf);
+      my_lcd.Draw_Pixe(entries_buff[0], entries_buff[1], entries_buff[2]);
+    }
+    free(entries_buff);
+}
+
+void print_arf_dir_encode2(File arf_file, uint32_t arf_num_entries, char draw_dir) {
+    int16_t* entries_buff = (int16_t*)malloc(sizeof(int16_t)*3); //3 because 2-byte xpos, 2-byte y-pos, 2-byte rgb
+    int16_t curr_row;
+    int16_t curr_entries_on_row; 
+    if (draw_dir < 2) {
+      //loop through all of the entries, reading them in and printing their values to the screen
+      int16_t last_color = 0x00; 
+      my_lcd.Set_Draw_color(last_color);
+      for (uint32_t i = 0; i < arf_num_entries; i++) {
+        arf_file.read(&curr_row, sizeof(int16_t)); 
+        arf_file.read(&curr_entries_on_row, sizeof(int16_t)); 
+        for (int row_entry = 0; row_entry < curr_entries_on_row; row_entry++) {
+            arf_file.read(entries_buff, sizeof(int16_t)*3); 
+            my_lcd.Set_Draw_color(entries_buff[0]);
+            my_lcd.Draw_Fast_HLine(entries_buff[1], curr_row, entries_buff[2]-entries_buff[1]+1);
+        }
+      }
+      free(entries_buff);
+    }
+}
+
 //.arf stands for animation rendering file
 void display_arf(const char* file_name) {
     File arf_file; 
     uint32_t arf_num_entries; 
+    char draw_dir;
     char encode_type;
     unsigned long start = millis();
     arf_file = SD.open(file_name);
@@ -267,7 +312,7 @@ void display_arf(const char* file_name) {
       return;
     }
 
-    if (!verify_arf(arf_file, &arf_num_entries, &encode_type)) {
+    if (!verify_arf(arf_file, &arf_num_entries, &draw_dir, &encode_type)) {
       Serial.println("Failed to verify ARF file");
       arf_file.close(); 
       return;
@@ -275,21 +320,10 @@ void display_arf(const char* file_name) {
 
     switch(encode_type) {
       case 1: //when the encoding type is xyrgb
-        int16_t* entries_buff = (int16_t*)malloc(sizeof(int16_t)*3); //3 because 2-byte xpos, 2-byte y-pos, 2-byte rgb
-        //loop through all of the entries, reading them in and printing their values to the screen
-        int16_t last_color = 0x00; 
-        my_lcd.Set_Draw_color(last_color);
-        for (uint32_t i = 0; i < arf_num_entries; i++) {
-          arf_file.read(entries_buff, sizeof(int16_t)*3); 
-          //sprintf(sbuf, "E#%d, [%d, %d, %x]", i, entries_buff[0], entries_buff[1], entries_buff[2]);
-          //Serial.println(sbuf);
-          if (entries_buff[2] != last_color) {
-            my_lcd.Set_Draw_color(entries_buff[2]);
-            last_color = entries_buff[2];
-          }
-          my_lcd.Draw_Pixel(entries_buff[0], entries_buff[1]);
-        }
-        free(entries_buff);
+        print_arf_dir_encode1(arf_file, arf_num_entries, draw_dir);
+      break;
+      case 2:
+        print_arf_dir_encode2(arf_file, arf_num_entries, draw_dir);
       break;
     }
 
@@ -300,10 +334,10 @@ void display_arf(const char* file_name) {
 
 //assumes format of .bmp, then all .arf after
 bool draw_animation(const char ** animation_files, int num_files, bool* already_blinked) {
-  //if (!*already_blinked) {
+  if (!*already_blinked) {
     display_bmp(animation_files[0], down2up); 
     *already_blinked = true;
-  //}
+  }
   for (int i = 1; i < num_files; i++) {
     display_arf(animation_files[i]);
   }
@@ -320,7 +354,13 @@ bool already_blinked = false;
 void loop() 
 {
 
-    draw_animation(vert_tobl_loop, tobl_loop, &already_blinked);
+    draw_animation(t1_loop, t1, &already_blinked);
+    //draw_animation(vert_tobl_loop, tobl_loop, &already_blinked);
+    long start = millis();
+    //my_lcd.Fill_Screen(BLACK);
+    Serial.print("Fill Screen Time: ");
+    Serial.println(millis()-start);
+    delay(3000);
     //int i = 0;
     //for (i= 0; i < 12; i++) {
     //  //Serial.println(i);
