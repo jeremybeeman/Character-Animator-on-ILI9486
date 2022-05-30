@@ -93,6 +93,10 @@ char * extract_extension(char * file_in) {
 //Verifies that the file extension is ".bmp". Case sensitive
 bool verify_bmp_file_name(char* file2check) {
     char* bmp_ext = (char*)malloc(sizeof_BMP_name+1);
+    char* ext_extract = extract_extension(file2check); 
+    if (!ext_extract) {
+        return false;
+    }
     memcpy(bmp_ext, extract_extension(file2check), sizeof_BMP_name);
     bmp_ext[sizeof_BMP_name] = '\0';
     bool out_bool = strcmp(bmp_ext, ".bmp") == 0;
@@ -265,6 +269,11 @@ char* extract_file_name(char* file_dir_name) {
             slash = '/';
         break;
     }
+    //verify that the file actually has one correct slash before continuing 
+    if (strchr(file_dir_name, slash) == NULL) {
+        fprintf(stderr, "File Entry not in correct format. Reformat for desired OS file structure\n");
+        return NULL;
+    }
     char* file_loc = NULL;
     char* next_file_loc = strchr(file_dir_name, slash);
     while (next_file_loc) {
@@ -417,6 +426,7 @@ char** read_cmd_file(int* num_lines_out, char* input_cmd_file_dir) {
 
     if (NULL == (cmd_file = fopen(input_cmd_file_dir, "r"))) {
         fprintf(stderr, "File Open Failiure\n");
+        free(cmd_file_out);
         return NULL;
     }
     char *line = NULL;
@@ -926,12 +936,14 @@ void files2arf(struct BMP_attributes* last_BMP, struct BMP_attributes* curr_BMP,
  *                 END ARF File Handler
  **************************************************************************************************************/
 
-//Free the BMP pixel array based on how many files have been processed so far. Greater than 1 will free all 3 of array
-void free_BMP_arr(int curr_file_count, int16_t** BMP_pixel_arr) {
-    for (int i = 0; i < 2*(curr_file_count > 0)+(curr_file_count>1); i++) {
-        free(BMP_pixel_arr[i]);
+//Free the BMP pixel array based on how many files have been processed so far.
+void free_BMP_arr(int curr_file_count, BMP_attributes* curr_BMP) {
+
+    for (int i = 0; i < 2; i++) {
+        free(curr_BMP[i].BMP_pixel_array);
+        free(curr_BMP[i].BMP_header);
     }
-    free(BMP_pixel_arr);
+
 }
 
 //Takes the .bmp header and the new width and height and the pixel array and outputs a .bmp
@@ -957,6 +969,8 @@ void BMP_attr2BMP(BMP_attributes* BMP2Create, char* BMP_file_dir, char* BMP_file
     fclose(BMP_filep);
     
 }
+
+
 
 //The main function runs through and analyzes the information 
 int main(int argc, char *argv[])
@@ -993,10 +1007,18 @@ int main(int argc, char *argv[])
         struct BMP_attributes BMP_handler[total_BMP_attr]; 
         //struct BMP_attributes* BMP_attr_point; 
         //serach through all of the data in the setup file 
+        char* temp_extract;
         for (int curr_file_num = 0; curr_file_num < num_lines_in_file; curr_file_num+=2) {
             //verify the name is a .bmp extension 
-            if (!verify_bmp_file_name(extract_file_name(cmd_file_data[curr_file_num]))) {
+            if ((temp_extract = extract_file_name(cmd_file_data[curr_file_num])) == NULL) {
+                free_files_charpp(cmd_file_data, num_lines_in_file);
+                free_BMP_arr(file_count, BMP_handler);
+                return 1;
+            }
+            if (!verify_bmp_file_name(temp_extract)) {
                 fprintf(stderr, "ERROR, File Extension isn't exactly (.bmp). Case sensitive\n");
+                free_files_charpp(cmd_file_data, num_lines_in_file);
+                free_BMP_arr(file_count, BMP_handler);
                 return 1;
             }
             fprintf(stdout, "curr file num: %d\n", curr_file_num);
@@ -1011,11 +1033,15 @@ int main(int argc, char *argv[])
                     BMP_handler[first_BMP_attr].BMP_file = fopen(cmd_file_data[curr_file_num], "rb");
                     if (BMP_handler[first_BMP_attr].BMP_file == NULL) {
                         fprintf(stderr, "ERROR, Failed to open file [%s]\n", cmd_file_data[curr_file_num]);
+                        free_files_charpp(cmd_file_data, num_lines_in_file);
+                        free_BMP_arr(file_count, BMP_handler);
                         return 1;
                     }
                     //if the file isn't a valid bmp, free
                     if(!verify_bmp(&BMP_handler[first_BMP_attr])) {
                         fprintf(stderr, "Exiting Due to Failed BMP...\n");
+                        free_files_charpp(cmd_file_data, num_lines_in_file);
+                        free_BMP_arr(file_count, BMP_handler);
                         return 1;
                     }
                     //Fills the values of the BMP pixel array
@@ -1039,11 +1065,15 @@ int main(int argc, char *argv[])
                     BMP_handler[curr_BMP_attr].BMP_file = fopen(cmd_file_data[curr_file_num], "rb");
                     if (BMP_handler[curr_BMP_attr].BMP_file == NULL) {
                         fprintf(stderr, "ERROR, Failed to open file [%s]\n", cmd_file_data[curr_file_num]);
+                        free_files_charpp(cmd_file_data, num_lines_in_file);
+                        free_BMP_arr(file_count, BMP_handler);
                         return 1;
                     }
                     //if the file isn't a valid bmp, free
                     if(!verify_bmp(&BMP_handler[curr_BMP_attr])) {
                         fprintf(stderr, "Exiting Due to Failed BMP...\n");
+                        free_files_charpp(cmd_file_data, num_lines_in_file);
+                        free_BMP_arr(file_count, BMP_handler);
                         return 1;
                     }
                     //Fills the values of the BMP pixel array
@@ -1069,7 +1099,9 @@ int main(int argc, char *argv[])
         }
         //If there was only one file in the folder, fail code. 
         if (file_count == 1) {
-            fprintf(stderr, "There was only one file in the folder, so no animation was possible.\n");
+            fprintf(stderr, "There was only one file specified, so no animation was possible.\n");
+            free_files_charpp(cmd_file_data, num_lines_in_file);
+            free_BMP_arr(file_count, BMP_handler);
             return 1;
         }
         
